@@ -1,4 +1,4 @@
-"""Main application window with tabbed interface."""
+"""Main application window with sidebar navigation."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
-    QMainWindow, QMenuBar, QStatusBar, QTabWidget,
+    QHBoxLayout, QMainWindow, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from musicorg.ui.autotag_panel import AutoTagPanel
@@ -16,13 +16,15 @@ from musicorg.ui.settings_dialog import SettingsDialog
 from musicorg.ui.source_panel import SourcePanel
 from musicorg.ui.sync_panel import SyncPanel
 from musicorg.ui.tag_editor_panel import TagEditorPanel
+from musicorg.ui.widgets.sidebar import SidebarNav
+from musicorg.ui.widgets.status_strip import StatusStrip
 
 if TYPE_CHECKING:
     from musicorg.config.settings import AppSettings
 
 
 class MainWindow(QMainWindow):
-    """Main application window with 4 tabs."""
+    """Main application window with sidebar navigation."""
 
     def __init__(self, settings: AppSettings) -> None:
         super().__init__()
@@ -33,29 +35,47 @@ class MainWindow(QMainWindow):
         self.resize(1100, 750)
         self.setObjectName("MainWindow")
 
-        self._setup_tabs()
+        self._setup_layout()
         self._setup_menu()
-        self._setup_statusbar()
         self._connect_panels()
         self._restore_state()
 
-    def _setup_tabs(self) -> None:
-        self._tabs = QTabWidget()
-        self._tabs.setDocumentMode(True)
-        self._tabs.setMovable(False)
-        self._tabs.setUsesScrollButtons(False)
-        self._tabs.setTabPosition(QTabWidget.TabPosition.North)
-        self.setCentralWidget(self._tabs)
+    def _setup_layout(self) -> None:
+        central = QWidget()
+        central.setContentsMargins(0, 0, 0, 0)
+        self.setCentralWidget(central)
 
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # Main content row: sidebar + stacked panels
+        content_row = QHBoxLayout()
+        content_row.setContentsMargins(0, 0, 0, 0)
+        content_row.setSpacing(0)
+
+        self._sidebar = SidebarNav()
+        self._sidebar.page_changed.connect(self._on_nav_changed)
+        self._sidebar.settings_clicked.connect(self._open_settings)
+        content_row.addWidget(self._sidebar)
+
+        self._stack = QStackedWidget()
         self._source_panel = SourcePanel()
         self._tag_editor_panel = TagEditorPanel()
         self._autotag_panel = AutoTagPanel()
         self._sync_panel = SyncPanel()
 
-        self._tabs.addTab(self._source_panel, "Source")
-        self._tabs.addTab(self._tag_editor_panel, "Tag Editor")
-        self._tabs.addTab(self._autotag_panel, "Auto-Tag")
-        self._tabs.addTab(self._sync_panel, "Sync")
+        self._stack.addWidget(self._source_panel)      # index 0
+        self._stack.addWidget(self._tag_editor_panel)   # index 1
+        self._stack.addWidget(self._autotag_panel)      # index 2
+        self._stack.addWidget(self._sync_panel)         # index 3
+        content_row.addWidget(self._stack, 1)
+
+        outer.addLayout(content_row, 1)
+
+        # Status strip
+        self._status_strip = StatusStrip()
+        outer.addWidget(self._status_strip)
 
         # Apply saved dirs
         if self._settings.source_dir:
@@ -64,6 +84,9 @@ class MainWindow(QMainWindow):
         if self._settings.dest_dir:
             self._sync_panel.set_dest_dir(self._settings.dest_dir)
         self._sync_panel.set_path_format(self._settings.path_format)
+
+    def _on_nav_changed(self, index: int) -> None:
+        self._stack.setCurrentIndex(index)
 
     def _setup_menu(self) -> None:
         menubar = self.menuBar()
@@ -88,11 +111,6 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self._show_about)
         help_menu.addAction(about_action)
 
-    def _setup_statusbar(self) -> None:
-        self._statusbar = QStatusBar()
-        self.setStatusBar(self._statusbar)
-        self._statusbar.showMessage("Ready")
-
     def _connect_panels(self) -> None:
         # Source → Tag Editor: send selected files
         self._source_panel.connect_send_to_editor(self._send_to_editor)
@@ -101,18 +119,20 @@ class MainWindow(QMainWindow):
         self._source_panel.files_selected.connect(self._autotag_panel.load_files)
         # Auto-Tag applied → refresh notice
         self._autotag_panel.tags_applied.connect(
-            lambda: self._statusbar.showMessage("Tags applied — re-scan to see changes")
+            lambda: self._status_strip.show_message("Tags applied — re-scan to see changes")
         )
 
     def _send_to_editor(self, paths: list[Path]) -> None:
         if paths:
             self._tag_editor_panel.load_files(paths)
-            self._tabs.setCurrentWidget(self._tag_editor_panel)
+            self._stack.setCurrentIndex(1)
+            self._sidebar.set_selected(1)
 
     def _send_to_autotag(self, paths: list[Path]) -> None:
         if paths:
             self._autotag_panel.load_files(paths)
-            self._tabs.setCurrentWidget(self._autotag_panel)
+            self._stack.setCurrentIndex(2)
+            self._sidebar.set_selected(2)
 
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self._settings, self)
@@ -124,7 +144,7 @@ class MainWindow(QMainWindow):
             if self._settings.dest_dir:
                 self._sync_panel.set_dest_dir(self._settings.dest_dir)
             self._sync_panel.set_path_format(self._settings.path_format)
-            self._statusbar.showMessage("Settings updated")
+            self._status_strip.show_message("Settings updated")
 
     def _show_about(self) -> None:
         from PySide6.QtWidgets import QMessageBox

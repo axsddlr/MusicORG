@@ -76,7 +76,6 @@ class TagEditorPanel(QWidget):
         self._progress = ProgressIndicator()
         layout.addWidget(self._progress)
 
-        layout.addStretch()
 
     def load_files(self, paths: list[Path]) -> None:
         """Load a list of files for editing."""

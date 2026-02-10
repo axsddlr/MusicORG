@@ -7,7 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QComboBox, QGroupBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+    QComboBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
     QMessageBox, QPushButton, QSplitter, QVBoxLayout, QWidget,
 )
 
@@ -54,6 +54,7 @@ class SourcePanel(QWidget):
 
         # Directory picker
         self._dir_picker = DirPicker("Browse...")
+        self._dir_picker.setMaximumHeight(32)
         self._dir_picker.path_changed.connect(self._on_source_path_changed)
         layout.addWidget(self._dir_picker)
 
@@ -79,27 +80,36 @@ class SourcePanel(QWidget):
         browser_splitter.setChildrenCollapsible(False)
         browser_splitter.setHandleWidth(2)
 
-        artist_group = QGroupBox("Album Artist")
-        artist_group.setMinimumWidth(230)
-        artist_layout = QVBoxLayout(artist_group)
-        artist_layout.setContentsMargins(6, 6, 6, 6)
+        artist_pane = QWidget()
+        artist_pane.setMinimumWidth(230)
+        artist_layout = QVBoxLayout(artist_pane)
+        artist_layout.setContentsMargins(0, 0, 0, 0)
         artist_layout.setSpacing(4)
+        artist_header = QLabel("ALBUM ARTIST")
+        artist_header.setObjectName("SectionHeader")
+        artist_header.setContentsMargins(6, 6, 6, 2)
+        artist_layout.addWidget(artist_header)
         self._artist_list = QListWidget()
         self._artist_list.setUniformItemSizes(True)
         self._artist_list.currentItemChanged.connect(self._on_artist_changed)
         artist_layout.addWidget(self._artist_list)
 
-        content_group = QGroupBox("Album and Tracks")
-        content_layout = QVBoxLayout(content_group)
-        content_layout.setContentsMargins(6, 6, 6, 6)
+        content_pane = QWidget()
+        content_layout = QVBoxLayout(content_pane)
+        content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(6)
+        content_header = QLabel("ALBUM AND TRACKS")
+        content_header.setObjectName("SectionHeader")
+        content_header.setContentsMargins(6, 6, 6, 2)
+        content_layout.addWidget(content_header)
 
         top_row = QHBoxLayout()
         top_row.setContentsMargins(0, 0, 0, 0)
         top_row.setSpacing(12)
         self._cover_label = QLabel("No Cover")
         self._cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._cover_label.setFixedSize(144, 144)
+        self._cover_label.setMinimumSize(160, 160)
+        self._cover_label.setMaximumSize(200, 200)
         self._cover_label.setStyleSheet(
             "border: 1px solid #2f3743; border-radius: 6px; color: #9aa7bb;"
         )
@@ -130,8 +140,8 @@ class SourcePanel(QWidget):
         self._file_table.selection_changed.connect(self._on_selection_changed)
         content_layout.addWidget(self._file_table, 1)
 
-        browser_splitter.addWidget(artist_group)
-        browser_splitter.addWidget(content_group)
+        browser_splitter.addWidget(artist_pane)
+        browser_splitter.addWidget(content_pane)
         browser_splitter.setStretchFactor(0, 2)
         browser_splitter.setStretchFactor(1, 8)
         browser_splitter.setSizes([250, 950])
