@@ -38,7 +38,7 @@ class BeetsConfigManager:
             "paths": {
                 "default": self._settings.path_format,
             },
-            "plugins": [],
+            "plugins": ["musicbrainz"],
         }
 
         if self._settings.discogs_token:
@@ -64,3 +64,15 @@ class BeetsConfigManager:
             # Beets config loading varies across versions; fall back to env var
             import os
             os.environ["BEETSDIR"] = str(self._config_dir)
+
+        # Ensure metadata source plugins are loaded for autotag candidates.
+        try:
+            import beets.plugins
+            from beets import metadata_plugins
+
+            # Clear cached source discovery and load configured plugins once.
+            metadata_plugins.find_metadata_source_plugins.cache_clear()
+            beets.plugins.load_plugins()
+            metadata_plugins.find_metadata_source_plugins.cache_clear()
+        except Exception:
+            pass

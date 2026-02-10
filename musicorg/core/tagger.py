@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import mutagen
 from mutagen.easyid3 import EasyID3
-from mutagen.flac import FLAC
+from mutagen.flac import FLAC, Picture
+from mutagen.id3 import APIC
 from mutagen.mp3 import MP3
 
 
@@ -24,6 +25,8 @@ class TagData:
     year: int = 0
     genre: str = ""
     composer: str = ""
+    artwork_data: bytes | None = None
+    artwork_mime: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -36,6 +39,8 @@ class TagData:
             "year": self.year,
             "genre": self.genre,
             "composer": self.composer,
+            "artwork_data": self.artwork_data,
+            "artwork_mime": self.artwork_mime,
         }
 
 
@@ -95,6 +100,18 @@ class TagManager:
         except mutagen.MutagenError:
             return TagData()
         tags = dict(audio.tags or {})
+        artwork_data = b""
+        artwork_mime = ""
+        try:
+            raw_audio = MP3(path)
+            if raw_audio.tags:
+                pictures = raw_audio.tags.getall("APIC")
+                if pictures:
+                    picture = pictures[0]
+                    artwork_data = bytes(getattr(picture, "data", b""))
+                    artwork_mime = str(getattr(picture, "mime", "") or "")
+        except mutagen.MutagenError:
+            pass
         return TagData(
             title=_first(tags, "title"),
             artist=_first(tags, "artist"),
@@ -105,6 +122,8 @@ class TagManager:
             year=_first_int(tags, "date"),
             genre=_first(tags, "genre"),
             composer=_first(tags, "composer"),
+            artwork_data=artwork_data,
+            artwork_mime=artwork_mime,
         )
 
     def _write_mp3(self, path: Path, tags: TagData) -> None:
@@ -126,6 +145,24 @@ class TagManager:
         audio["composer"] = tags.composer
         audio.save()
 
+        try:
+            raw_audio = MP3(path)
+        except mutagen.MutagenError:
+            return
+        if raw_audio.tags is None:
+            raw_audio.add_tags()
+        if tags.artwork_data is not None:
+            raw_audio.tags.delall("APIC")
+            if tags.artwork_data:
+                raw_audio.tags.add(APIC(
+                    encoding=3,  # UTF-8
+                    mime=tags.artwork_mime or "image/jpeg",
+                    type=3,  # Cover (front)
+                    desc="Cover",
+                    data=tags.artwork_data,
+                ))
+            raw_audio.save(v2_version=3)
+
     # -- FLAC --
 
     def _read_flac(self, path: Path) -> TagData:
@@ -134,6 +171,12 @@ class TagManager:
         except mutagen.MutagenError:
             return TagData()
         tags = dict(audio.tags or {})
+        artwork_data = b""
+        artwork_mime = ""
+        if audio.pictures:
+            picture = audio.pictures[0]
+            artwork_data = bytes(getattr(picture, "data", b""))
+            artwork_mime = str(getattr(picture, "mime", "") or "")
         return TagData(
             title=_first(tags, "title"),
             artist=_first(tags, "artist"),
@@ -144,6 +187,8 @@ class TagManager:
             year=_first_int(tags, "date"),
             genre=_first(tags, "genre"),
             composer=_first(tags, "composer"),
+            artwork_data=artwork_data,
+            artwork_mime=artwork_mime,
         )
 
     def _write_flac(self, path: Path, tags: TagData) -> None:
@@ -160,4 +205,12 @@ class TagManager:
         audio["date"] = str(tags.year) if tags.year else ""
         audio["genre"] = tags.genre
         audio["composer"] = tags.composer
+        if tags.artwork_data is not None:
+            audio.clear_pictures()
+            if tags.artwork_data:
+                picture = Picture()
+                picture.type = 3  # Cover (front)
+                picture.mime = tags.artwork_mime or "image/jpeg"
+                picture.data = tags.artwork_data
+                audio.add_picture(picture)
         audio.save()

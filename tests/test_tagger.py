@@ -42,13 +42,23 @@ class TestTagData:
         assert td.title == ""
         assert td.artist == ""
         assert td.track == 0
+        assert td.artwork_data is None
+        assert td.artwork_mime == ""
 
     def test_as_dict(self):
-        td = TagData(title="Song", artist="Band", track=5)
+        td = TagData(
+            title="Song",
+            artist="Band",
+            track=5,
+            artwork_data=b"\x01\x02",
+            artwork_mime="image/png",
+        )
         d = td.as_dict()
         assert d["title"] == "Song"
         assert d["artist"] == "Band"
         assert d["track"] == 5
+        assert d["artwork_data"] == b"\x01\x02"
+        assert d["artwork_mime"] == "image/png"
 
 
 class TestTagManager:

@@ -23,11 +23,17 @@ class MatchList(QTableView):
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.setAlternatingRowColors(True)
         self.verticalHeader().setVisible(False)
+        self.verticalHeader().setDefaultSectionSize(24)
+        self.setShowGrid(False)
 
         header = self.horizontalHeader()
+        header.setHighlightSections(False)
         header.setStretchLastSection(True)
-        for i in range(5):
-            header.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
 
         self.clicked.connect(lambda idx: self.match_selected.emit(idx.row()))
 

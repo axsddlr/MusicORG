@@ -55,12 +55,14 @@ class TagEditorPanel(QWidget):
         # Action buttons
         btn_layout = QHBoxLayout()
         self._save_btn = QPushButton("Save")
+        self._save_btn.setProperty("role", "accent")
         self._save_btn.setEnabled(False)
         self._save_btn.clicked.connect(self._save_tags)
         self._revert_btn = QPushButton("Revert")
         self._revert_btn.setEnabled(False)
         self._revert_btn.clicked.connect(self._revert_tags)
         self._save_all_btn = QPushButton("Save All")
+        self._save_all_btn.setProperty("role", "accent")
         self._save_all_btn.setEnabled(False)
         self._save_all_btn.clicked.connect(self._save_all_tags)
 
@@ -148,7 +150,7 @@ class TagEditorPanel(QWidget):
 
         reply = QMessageBox.question(
             self, "Save All",
-            f"Apply current tags to all {len(self._files)} files?",
+            f"Apply current tags (including artwork) to all {len(self._files)} files?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:

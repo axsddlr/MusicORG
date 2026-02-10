@@ -8,6 +8,7 @@ from musicorg.core.syncer import (
     SyncItem, SyncManager, SyncPlan,
     _build_dest_path, _sanitize_filename,
 )
+from musicorg.core.tagger import TagData
 
 
 class TestSanitizeFilename:
@@ -120,3 +121,38 @@ class TestSyncManager:
         mgr = SyncManager()
         mgr.cancel()
         assert mgr._cancelled is True
+
+    def test_plan_sync_with_reverse_by_track(self, tmp_path):
+        source = tmp_path / "source"
+        dest = tmp_path / "dest"
+        source.mkdir()
+        dest.mkdir()
+
+        src_song1 = source / "song1.mp3"
+        src_song1.write_bytes(b"src")
+        dst_song1 = dest / "song1.mp3"
+        dst_song1.write_bytes(b"dst1")
+        dst_song2 = dest / "song2.mp3"
+        dst_song2.write_bytes(b"dst2")
+
+        mgr = SyncManager()
+
+        def fake_read(path: Path) -> TagData:
+            stem = path.stem.lower()
+            track_num = 1 if stem == "song1" else 2
+            return TagData(
+                title=stem,
+                artist="Artist",
+                album="Album",
+                track=track_num,
+            )
+
+        mgr._tag_manager.read = fake_read  # type: ignore[method-assign]
+
+        plan = mgr.plan_sync(source, dest, include_reverse=True)
+        reverse_items = [i for i in plan.items if i.source.parent == dest and i.dest.parent != dest]
+
+        # song2 exists only in destination, so it should be planned back into source.
+        assert any(i.source == dst_song2 for i in reverse_items)
+        # song1 exists in both trees (same track identity), so no reverse copy for it.
+        assert not any(i.source == dst_song1 for i in reverse_items)

@@ -23,8 +23,11 @@ class FileTable(QTableView):
         self.setAlternatingRowColors(True)
         self.setSortingEnabled(True)
         self.verticalHeader().setVisible(False)
+        self.verticalHeader().setDefaultSectionSize(24)
+        self.setShowGrid(False)
 
         header = self.horizontalHeader()
+        header.setHighlightSections(False)
         header.setStretchLastSection(True)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         for i in range(1, 6):

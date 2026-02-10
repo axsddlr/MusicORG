@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import mimetypes
+from pathlib import Path
+
 from PySide6.QtWidgets import (
-    QFormLayout, QLineEdit, QSpinBox, QWidget,
+    QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QSpinBox, QWidget,
 )
 
 from musicorg.core.tagger import TagData
@@ -28,6 +32,21 @@ class TagForm(QWidget):
         self.year_spin.setRange(0, 9999)
         self.genre_edit = QLineEdit()
         self.composer_edit = QLineEdit()
+        self._artwork_data: bytes = b""
+        self._artwork_mime: str = ""
+        self._artwork_label = QLabel("No artwork")
+        self._choose_artwork_btn = QPushButton("Choose Image...")
+        self._choose_artwork_btn.clicked.connect(self._choose_artwork)
+        self._clear_artwork_btn = QPushButton("Remove")
+        self._clear_artwork_btn.clicked.connect(self._clear_artwork)
+        self._clear_artwork_btn.setEnabled(False)
+
+        artwork_widget = QWidget()
+        artwork_layout = QHBoxLayout(artwork_widget)
+        artwork_layout.setContentsMargins(0, 0, 0, 0)
+        artwork_layout.addWidget(self._artwork_label, 1)
+        artwork_layout.addWidget(self._choose_artwork_btn)
+        artwork_layout.addWidget(self._clear_artwork_btn)
 
         layout.addRow("Title:", self.title_edit)
         layout.addRow("Artist:", self.artist_edit)
@@ -38,6 +57,7 @@ class TagForm(QWidget):
         layout.addRow("Year:", self.year_spin)
         layout.addRow("Genre:", self.genre_edit)
         layout.addRow("Composer:", self.composer_edit)
+        layout.addRow("Artwork:", artwork_widget)
 
     def set_tags(self, tags: TagData) -> None:
         self.title_edit.setText(tags.title)
@@ -49,6 +69,9 @@ class TagForm(QWidget):
         self.year_spin.setValue(tags.year)
         self.genre_edit.setText(tags.genre)
         self.composer_edit.setText(tags.composer)
+        self._artwork_data = tags.artwork_data or b""
+        self._artwork_mime = tags.artwork_mime or ""
+        self._refresh_artwork_label()
 
     def get_tags(self) -> TagData:
         return TagData(
@@ -61,6 +84,8 @@ class TagForm(QWidget):
             year=self.year_spin.value(),
             genre=self.genre_edit.text(),
             composer=self.composer_edit.text(),
+            artwork_data=self._artwork_data,
+            artwork_mime=self._artwork_mime,
         )
 
     def clear(self) -> None:
@@ -73,9 +98,53 @@ class TagForm(QWidget):
         self.year_spin.setValue(0)
         self.genre_edit.clear()
         self.composer_edit.clear()
+        self._artwork_data = b""
+        self._artwork_mime = ""
+        self._refresh_artwork_label()
 
     def set_enabled(self, enabled: bool) -> None:
         for child in self.findChildren(QLineEdit):
             child.setEnabled(enabled)
         for child in self.findChildren(QSpinBox):
             child.setEnabled(enabled)
+        self._choose_artwork_btn.setEnabled(enabled)
+        self._clear_artwork_btn.setEnabled(enabled and bool(self._artwork_data))
+
+    def _choose_artwork(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Artwork Image",
+            "",
+            "Images (*.jpg *.jpeg *.png *.webp *.bmp);;All Files (*)",
+        )
+        if not file_path:
+            return
+        path = Path(file_path)
+        try:
+            self._artwork_data = path.read_bytes()
+        except OSError:
+            self._artwork_data = b""
+            self._artwork_mime = ""
+            self._refresh_artwork_label()
+            return
+        mime, _ = mimetypes.guess_type(path.name)
+        self._artwork_mime = mime or "image/jpeg"
+        self._refresh_artwork_label(path.name)
+
+    def _clear_artwork(self) -> None:
+        self._artwork_data = b""
+        self._artwork_mime = ""
+        self._refresh_artwork_label()
+
+    def _refresh_artwork_label(self, source_name: str = "") -> None:
+        if self._artwork_data:
+            size_kb = max(1, len(self._artwork_data) // 1024)
+            if source_name:
+                self._artwork_label.setText(f"{source_name} ({size_kb} KB)")
+            else:
+                mime = self._artwork_mime or "image/*"
+                self._artwork_label.setText(f"Embedded artwork ({mime}, {size_kb} KB)")
+            self._clear_artwork_btn.setEnabled(True)
+        else:
+            self._artwork_label.setText("No artwork")
+            self._clear_artwork_btn.setEnabled(False)

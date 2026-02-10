@@ -15,11 +15,12 @@ class SyncPlanWorker(BaseWorker):
     """Plans a sync operation in a background thread."""
 
     def __init__(self, source_dir: str, dest_dir: str,
-                 path_format: str) -> None:
+                 path_format: str, include_reverse: bool = False) -> None:
         super().__init__()
         self._source_dir = source_dir
         self._dest_dir = dest_dir
         self._path_format = path_format
+        self._include_reverse = include_reverse
 
     def run(self) -> None:
         self.started.emit()
@@ -29,6 +30,7 @@ class SyncPlanWorker(BaseWorker):
                 self._source_dir,
                 self._dest_dir,
                 progress_cb=lambda cur, tot, msg: self.progress.emit(cur, tot, msg),
+                include_reverse=self._include_reverse,
             )
             self.finished.emit(plan)
         except Exception as e:

@@ -80,6 +80,26 @@ def _build_dest_path(dest_root: Path, tags: dict, ext: str,
     return dest_root.joinpath(*sanitized)
 
 
+def _normalize_track_value(value: str) -> str:
+    return " ".join(value.strip().lower().split())
+
+
+def _track_identity(path: Path, tags: dict) -> tuple[str, str, str, int, int]:
+    """Build a normalized identity key for matching tracks across trees."""
+    artist = tags.get("albumartist") or tags.get("artist") or ""
+    album = tags.get("album") or ""
+    title = tags.get("title") or path.stem
+    track = int(tags.get("track") or 0)
+    disc = int(tags.get("disc") or 0)
+    return (
+        _normalize_track_value(str(artist)),
+        _normalize_track_value(str(album)),
+        _normalize_track_value(str(title)),
+        track,
+        disc,
+    )
+
+
 class SyncManager:
     """Plans and executes non-destructive file copy operations."""
 
@@ -92,28 +112,33 @@ class SyncManager:
         self._cancelled = True
 
     def plan_sync(self, source_dir: str | Path, dest_dir: str | Path,
-                  progress_cb: Callable[[int, int, str], None] | None = None
-                  ) -> SyncPlan:
-        """Scan source, read tags, compute destination paths, check existence."""
+                  progress_cb: Callable[[int, int, str], None] | None = None,
+                  include_reverse: bool = False) -> SyncPlan:
+        """Build sync plan, optionally including reverse (dest->source) by track identity."""
         source_dir = Path(source_dir)
         dest_dir = Path(dest_dir)
 
-        scanner = FileScanner(source_dir)
-        files = scanner.scan()
+        source_files = FileScanner(source_dir).scan()
+        dest_files = FileScanner(dest_dir).scan() if include_reverse else []
+        total_steps = len(source_files) + len(dest_files)
+        step = 0
         plan = SyncPlan()
+        source_track_keys: set[tuple[str, str, str, int, int]] = set()
 
-        for i, af in enumerate(files):
+        for af in source_files:
             if self._cancelled:
                 break
 
+            step += 1
             if progress_cb:
-                progress_cb(i + 1, len(files), af.path.name)
+                progress_cb(step, total_steps or 1, af.path.name)
 
             try:
                 tags = self._tag_manager.read(af.path)
                 tag_dict = tags.as_dict()
             except Exception:
                 tag_dict = {}
+            source_track_keys.add(_track_identity(af.path, tag_dict))
 
             dest_path = _build_dest_path(dest_dir, tag_dict, af.extension,
                                          self._path_format)
@@ -122,6 +147,34 @@ class SyncManager:
             if dest_path.exists():
                 item.status = "exists"
             plan.items.append(item)
+
+        if include_reverse and not self._cancelled:
+            for af in dest_files:
+                if self._cancelled:
+                    break
+
+                step += 1
+                if progress_cb:
+                    progress_cb(step, total_steps or 1, f"reverse: {af.path.name}")
+
+                try:
+                    tags = self._tag_manager.read(af.path)
+                    tag_dict = tags.as_dict()
+                except Exception:
+                    tag_dict = {}
+
+                key = _track_identity(af.path, tag_dict)
+                if key in source_track_keys:
+                    continue
+                source_track_keys.add(key)
+
+                source_path = _build_dest_path(source_dir, tag_dict, af.extension,
+                                               self._path_format)
+
+                item = SyncItem(source=af.path, dest=source_path)
+                if source_path.exists():
+                    item.status = "exists"
+                plan.items.append(item)
 
         return plan
 

@@ -31,6 +31,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("MusicOrg")
         self.setMinimumSize(900, 600)
         self.resize(1100, 750)
+        self.setObjectName("MainWindow")
 
         self._setup_tabs()
         self._setup_menu()
@@ -40,6 +41,10 @@ class MainWindow(QMainWindow):
 
     def _setup_tabs(self) -> None:
         self._tabs = QTabWidget()
+        self._tabs.setDocumentMode(True)
+        self._tabs.setMovable(False)
+        self._tabs.setUsesScrollButtons(False)
+        self._tabs.setTabPosition(QTabWidget.TabPosition.North)
         self.setCentralWidget(self._tabs)
 
         self._source_panel = SourcePanel()
@@ -93,6 +98,7 @@ class MainWindow(QMainWindow):
         self._source_panel.connect_send_to_editor(self._send_to_editor)
         # Source → Auto-Tag: send selected files
         self._source_panel.connect_send_to_autotag(self._send_to_autotag)
+        self._source_panel.files_selected.connect(self._autotag_panel.load_files)
         # Auto-Tag applied → refresh notice
         self._autotag_panel.tags_applied.connect(
             lambda: self._statusbar.showMessage("Tags applied — re-scan to see changes")

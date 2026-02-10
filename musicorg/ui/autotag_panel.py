@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
-    QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QAbstractItemView, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
     QMessageBox, QPushButton, QSplitter, QTableWidget, QTableWidgetItem,
+    QSizePolicy,
     QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import Qt
@@ -29,6 +31,7 @@ class AutoTagPanel(QWidget):
         self._candidates: list[MatchCandidate] = []
         self._search_worker: AutoTagWorker | None = None
         self._search_thread: QThread | None = None
+        self._search_in_progress = False
         self._apply_worker: ApplyMatchWorker | None = None
         self._apply_thread: QThread | None = None
 
@@ -36,6 +39,8 @@ class AutoTagPanel(QWidget):
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(6)
 
         # Files info
         self._files_label = QLabel("No files loaded. Send files from Source tab.")
@@ -43,14 +48,26 @@ class AutoTagPanel(QWidget):
 
         # Search controls
         search_group = QGroupBox("Search")
+        search_group.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum,
+        )
         search_layout = QFormLayout(search_group)
+        search_layout.setContentsMargins(6, 6, 6, 6)
+        search_layout.setHorizontalSpacing(6)
+        search_layout.setVerticalSpacing(6)
         self._artist_edit = QLineEdit()
         self._album_edit = QLineEdit()
+        self._artist_edit.textChanged.connect(self._refresh_search_controls)
+        self._album_edit.textChanged.connect(self._refresh_search_controls)
         search_layout.addRow("Artist:", self._artist_edit)
         search_layout.addRow("Album:", self._album_edit)
 
         search_btn_layout = QHBoxLayout()
+        search_btn_layout.setContentsMargins(0, 2, 0, 0)
+        search_btn_layout.setSpacing(6)
         self._search_btn = QPushButton("Search Album")
+        self._search_btn.setProperty("role", "accent")
         self._search_btn.setEnabled(False)
         self._search_btn.clicked.connect(self._start_search)
         self._search_single_btn = QPushButton("Search Single")
@@ -64,10 +81,14 @@ class AutoTagPanel(QWidget):
 
         # Splitter for match list and track comparison
         splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(2)
 
         # Match candidates
         match_group = QGroupBox("Match Candidates")
         match_layout = QVBoxLayout(match_group)
+        match_layout.setContentsMargins(6, 6, 6, 6)
+        match_layout.setSpacing(4)
         self._match_list = MatchList()
         self._match_list.match_selected.connect(self._on_match_selected)
         match_layout.addWidget(self._match_list)
@@ -75,21 +96,45 @@ class AutoTagPanel(QWidget):
 
         # Track comparison
         track_group = QGroupBox("Track Details")
+        track_group.setMinimumHeight(170)
         track_layout = QVBoxLayout(track_group)
+        track_layout.setContentsMargins(6, 6, 6, 6)
+        track_layout.setSpacing(4)
         self._track_table = QTableWidget()
         self._track_table.setColumnCount(4)
         self._track_table.setHorizontalHeaderLabels(
             ["#", "Title", "Artist", "Length"]
         )
-        self._track_table.horizontalHeader().setStretchLastSection(True)
+        self._track_table.verticalHeader().setVisible(False)
+        self._track_table.verticalHeader().setDefaultSectionSize(24)
+        self._track_table.setAlternatingRowColors(True)
+        self._track_table.setShowGrid(False)
+        self._track_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self._track_table.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection
+        )
+        track_header = self._track_table.horizontalHeader()
+        track_header.setStretchLastSection(True)
+        track_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        track_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        track_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        track_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         track_layout.addWidget(self._track_table)
         splitter.addWidget(track_group)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        splitter.setSizes([320, 200])
 
         layout.addWidget(splitter, 1)
 
         # Apply button
         btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(8)
         self._apply_btn = QPushButton("Apply Match")
+        self._apply_btn.setProperty("role", "accent")
         self._apply_btn.setEnabled(False)
         self._apply_btn.clicked.connect(self._apply_match)
         btn_layout.addStretch()
@@ -99,14 +144,16 @@ class AutoTagPanel(QWidget):
         # Progress
         self._progress = ProgressIndicator()
         layout.addWidget(self._progress)
+        self._refresh_search_controls()
 
     def load_files(self, paths: list[Path]) -> None:
         """Load files for auto-tagging."""
         self._files = list(paths)
         count = len(self._files)
-        self._files_label.setText(f"{count} file(s) loaded for auto-tagging")
-        self._search_btn.setEnabled(count > 0)
-        self._search_single_btn.setEnabled(count == 1)
+        if count:
+            self._files_label.setText(f"{count} file(s) loaded for auto-tagging")
+        else:
+            self._files_label.setText("No files loaded. Send files from Source tab.")
         self._match_list.match_model.clear()
         self._track_table.setRowCount(0)
         self._apply_btn.setEnabled(False)
@@ -121,6 +168,7 @@ class AutoTagPanel(QWidget):
                 self._album_edit.setText(tags.album)
             except Exception:
                 pass
+        self._refresh_search_controls()
 
     def _start_search(self) -> None:
         self._do_search("album")
@@ -129,38 +177,56 @@ class AutoTagPanel(QWidget):
         self._do_search("single")
 
     def _do_search(self, mode: str) -> None:
-        if not self._files:
+        if self._search_in_progress:
             return
 
-        self._search_btn.setEnabled(False)
-        self._search_single_btn.setEnabled(False)
+        artist_hint = self._artist_edit.text().strip()
+        album_hint = self._album_edit.text().strip()
+        if mode == "single" and len(self._files) != 1:
+            QMessageBox.information(
+                self, "Single Search",
+                "Load exactly one file to use Search Single."
+            )
+            return
+        if mode == "album" and not self._files:
+            QMessageBox.information(
+                self, "Missing Files",
+                "Load files from Source before running album search."
+            )
+            return
+
+        self._search_in_progress = True
+        self._refresh_search_controls()
         self._progress.start("Searching...")
 
-        self._search_worker = AutoTagWorker(
+        worker = AutoTagWorker(
             paths=self._files,
-            artist_hint=self._artist_edit.text().strip(),
-            album_hint=self._album_edit.text().strip(),
+            artist_hint=artist_hint,
+            album_hint=album_hint,
             mode=mode,
         )
-        self._search_thread = QThread()
-        self._search_worker.moveToThread(self._search_thread)
-        self._search_thread.started.connect(self._search_worker.run)
-        self._search_worker.progress.connect(
+        thread = QThread()
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(
             self._on_search_progress,
             Qt.ConnectionType.QueuedConnection,
         )
-        self._search_worker.finished.connect(self._on_search_done)
-        self._search_worker.error.connect(self._on_search_error)
-        self._search_worker.finished.connect(self._search_thread.quit)
-        self._search_worker.error.connect(self._search_thread.quit)
-        self._search_thread.finished.connect(self._cleanup_search)
-        self._search_thread.start()
+        worker.finished.connect(self._on_search_done)
+        worker.error.connect(self._on_search_error)
+        worker.finished.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        thread.finished.connect(partial(self._cleanup_search, worker, thread))
+
+        self._search_worker = worker
+        self._search_thread = thread
+        thread.start()
 
     def _on_search_done(self, candidates: list) -> None:
         self._candidates = candidates
         self._match_list.match_model.set_candidates(candidates)
-        self._search_btn.setEnabled(True)
-        self._search_single_btn.setEnabled(len(self._files) == 1)
+        self._search_in_progress = False
+        self._refresh_search_controls()
         count = len(candidates)
         self._progress.finish(f"Found {count} candidate(s)")
 
@@ -168,10 +234,19 @@ class AutoTagPanel(QWidget):
         self._progress.update_progress(current, total, message)
 
     def _on_search_error(self, msg: str) -> None:
-        self._search_btn.setEnabled(True)
-        self._search_single_btn.setEnabled(len(self._files) == 1)
+        self._search_in_progress = False
+        self._refresh_search_controls()
         self._progress.finish(f"Error: {msg}")
         QMessageBox.critical(self, "Search Error", msg)
+
+    def _refresh_search_controls(self) -> None:
+        if self._search_in_progress:
+            self._search_btn.setEnabled(False)
+            self._search_single_btn.setEnabled(False)
+            return
+        has_loaded_files = bool(self._files)
+        self._search_btn.setEnabled(has_loaded_files)
+        self._search_single_btn.setEnabled(len(self._files) == 1)
 
     def _on_match_selected(self, row: int) -> None:
         candidate = self._match_list.match_model.get_candidate(row)
@@ -233,12 +308,12 @@ class AutoTagPanel(QWidget):
         self._apply_btn.setEnabled(True)
         QMessageBox.critical(self, "Apply Error", msg)
 
-    def _cleanup_search(self) -> None:
-        if self._search_worker:
-            self._search_worker.deleteLater()
+    def _cleanup_search(self, worker: AutoTagWorker, thread: QThread) -> None:
+        worker.deleteLater()
+        thread.deleteLater()
+        if self._search_worker is worker:
             self._search_worker = None
-        if self._search_thread:
-            self._search_thread.deleteLater()
+        if self._search_thread is thread:
             self._search_thread = None
 
     def _cleanup_apply(self) -> None:

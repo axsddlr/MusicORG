@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QProgressBar, QWidget
 
 
@@ -12,6 +13,7 @@ class ProgressIndicator(QWidget):
         super().__init__(parent)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
 
         self._bar = QProgressBar()
         self._bar.setMinimum(0)
@@ -19,6 +21,9 @@ class ProgressIndicator(QWidget):
         self._bar.setValue(0)
 
         self._label = QLabel()
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self.hide)
 
         layout.addWidget(self._bar, 1)
         layout.addWidget(self._label)
@@ -26,6 +31,7 @@ class ProgressIndicator(QWidget):
         self.hide()
 
     def start(self, message: str = "Working...") -> None:
+        self._hide_timer.stop()
         self._set_message(message)
         self._set_range(0, 100)
         self._set_value(0)
@@ -41,12 +47,17 @@ class ProgressIndicator(QWidget):
         if message:
             self._set_message(message)
 
-    def finish(self, message: str = "Done") -> None:
+    def finish(self, message: str = "Done", auto_hide_ms: int = 1600) -> None:
         self._set_range(0, 100)
         self._set_value(100)
         self._set_message(message)
+        self.show()
+        self._hide_timer.stop()
+        if auto_hide_ms > 0:
+            self._hide_timer.start(auto_hide_ms)
 
     def reset(self) -> None:
+        self._hide_timer.stop()
         self._set_range(0, 100)
         self._set_value(0)
         self._label.clear()

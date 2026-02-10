@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QThread, Qt
 from PySide6.QtWidgets import (
-    QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QCheckBox, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
     QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout,
     QWidget,
 )
@@ -45,17 +45,21 @@ class SyncPanel(QWidget):
         self._source_picker = DirPicker("Browse...")
         self._dest_picker = DirPicker("Browse...")
         self._format_edit = QLineEdit("$albumartist/$album/$track $title")
+        self._reverse_sync_check = QCheckBox("Include reverse sync (Dest -> Source by track)")
 
         config_layout.addRow("Source Directory:", self._source_picker)
         config_layout.addRow("Destination Directory:", self._dest_picker)
         config_layout.addRow("Path Format:", self._format_edit)
+        config_layout.addRow("", self._reverse_sync_check)
         layout.addWidget(config_group)
 
         # Buttons
         btn_layout = QHBoxLayout()
         self._plan_btn = QPushButton("Plan Sync")
+        self._plan_btn.setProperty("role", "accent")
         self._plan_btn.clicked.connect(self._start_plan)
         self._sync_btn = QPushButton("Start Sync")
+        self._sync_btn.setProperty("role", "accent")
         self._sync_btn.setEnabled(False)
         self._sync_btn.clicked.connect(self._start_sync)
         self._cancel_btn = QPushButton("Cancel")
@@ -112,7 +116,8 @@ class SyncPanel(QWidget):
 
         path_format = self._format_edit.text().strip() or "$albumartist/$album/$track $title"
 
-        self._plan_worker = SyncPlanWorker(source, dest, path_format)
+        include_reverse = self._reverse_sync_check.isChecked()
+        self._plan_worker = SyncPlanWorker(source, dest, path_format, include_reverse)
         self._plan_thread = QThread()
         self._plan_worker.moveToThread(self._plan_thread)
         self._plan_thread.started.connect(self._plan_worker.run)
