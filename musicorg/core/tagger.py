@@ -25,6 +25,7 @@ class TagData:
     year: int = 0
     genre: str = ""
     composer: str = ""
+    duration: float = 0.0
     artwork_data: bytes | None = None
     artwork_mime: str = ""
 
@@ -39,6 +40,7 @@ class TagData:
             "year": self.year,
             "genre": self.genre,
             "composer": self.composer,
+            "duration": self.duration,
             "artwork_data": self.artwork_data,
             "artwork_mime": self.artwork_mime,
         }
@@ -100,6 +102,7 @@ class TagManager:
         except mutagen.MutagenError:
             return TagData()
         tags = dict(audio.tags or {})
+        duration = getattr(audio.info, "length", 0.0) or 0.0
         artwork_data = b""
         artwork_mime = ""
         try:
@@ -122,6 +125,7 @@ class TagManager:
             year=_first_int(tags, "date"),
             genre=_first(tags, "genre"),
             composer=_first(tags, "composer"),
+            duration=duration,
             artwork_data=artwork_data,
             artwork_mime=artwork_mime,
         )
@@ -171,6 +175,7 @@ class TagManager:
         except mutagen.MutagenError:
             return TagData()
         tags = dict(audio.tags or {})
+        duration = getattr(audio.info, "length", 0.0) or 0.0
         artwork_data = b""
         artwork_mime = ""
         if audio.pictures:
@@ -187,6 +192,7 @@ class TagManager:
             year=_first_int(tags, "date"),
             genre=_first(tags, "genre"),
             composer=_first(tags, "composer"),
+            duration=duration,
             artwork_data=artwork_data,
             artwork_mime=artwork_mime,
         )

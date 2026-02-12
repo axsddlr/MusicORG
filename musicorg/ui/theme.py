@@ -401,4 +401,173 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
 QFormLayout QLabel {
     background-color: transparent;
 }
+
+/* ── Album Card ── */
+
+#AlbumCard {
+    background-color: #161920;
+    border: 1px solid #222730;
+    border-radius: 8px;
+}
+
+#AlbumCard:hover {
+    border-color: #2a3040;
+    background-color: #1a1e26;
+}
+
+#AlbumCover {
+    border: 1px solid #222730;
+    border-radius: 4px;
+    background-color: #111316;
+    color: #4a5260;
+    font-size: 8pt;
+}
+
+#AlbumTitle {
+    background-color: transparent;
+    color: #f0f2f5;
+    font-size: 12pt;
+    font-weight: 700;
+}
+
+#AlbumYear {
+    background-color: transparent;
+    color: #7a8494;
+    font-size: 10pt;
+}
+
+#AlbumMeta {
+    background-color: transparent;
+    color: #7a8494;
+    font-size: 9pt;
+}
+
+#DiscHeader {
+    background-color: transparent;
+    color: #7a8494;
+    font-size: 9pt;
+    font-weight: 600;
+    padding: 6px 0 2px 0;
+    border-top: 1px solid #222730;
+    margin-top: 4px;
+}
+
+/* ── Track Row ── */
+
+#TrackRow {
+    background-color: transparent;
+    border: none;
+    border-left: 3px solid transparent;
+    border-radius: 0;
+    padding: 0;
+}
+
+#TrackRow:hover {
+    background-color: #1e2228;
+}
+
+#TrackRow[selected="true"] {
+    background-color: #1e2530;
+    border-left: 3px solid #d4a44a;
+}
+
+#TrackNumber {
+    background-color: transparent;
+    color: #4a5260;
+    font-size: 9pt;
+}
+
+#TrackTitle {
+    background-color: transparent;
+    color: #dcdfe4;
+    font-size: 9pt;
+}
+
+#TrackDuration {
+    background-color: transparent;
+    color: #7a8494;
+    font-size: 9pt;
+}
+
+/* ── Alphabet Bar ── */
+
+#AlphabetBar {
+    background-color: transparent;
+}
+
+#AlphabetBar QPushButton {
+    background-color: transparent;
+    border: none;
+    border-radius: 3px;
+    color: #7a8494;
+    font-size: 8pt;
+    font-weight: 600;
+    padding: 2px;
+    min-height: 18px;
+    min-width: 18px;
+}
+
+#AlphabetBar QPushButton:hover {
+    background-color: #252a35;
+    color: #dcdfe4;
+}
+
+#AlphabetBar QPushButton:disabled {
+    color: #2a2f38;
+    background-color: transparent;
+}
+
+#AlphabetBar QPushButton[active="true"] {
+    background-color: #d4a44a;
+    color: #0c0e12;
+}
+
+/* ── Album Browser ── */
+
+#AlbumBrowser {
+    background-color: transparent;
+    border: none;
+}
+
+#AlbumBrowserInner {
+    background-color: transparent;
+}
+
+/* ── Tree Widget (Duplicates) ── */
+
+QTreeWidget {
+    background-color: #111316;
+    alternate-background-color: #141518;
+    border: none;
+    selection-background-color: #252a35;
+    selection-color: #f8fbff;
+}
+
+QTreeWidget::item {
+    padding: 3px 5px;
+}
+
+QTreeWidget QHeaderView::section {
+    background-color: #111316;
+    color: #7a8494;
+    border: 0;
+    border-bottom: 1px solid #222730;
+    padding: 5px 7px;
+    font-weight: 600;
+    font-size: 9pt;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+#DuplicateKeepLabel {
+    color: #4CAF50;
+}
+
+#DuplicateDeleteLabel {
+    color: #F44336;
+}
+
+#DuplicateGroupHeader {
+    color: #d4a44a;
+}
 """

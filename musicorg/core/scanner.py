@@ -15,10 +15,13 @@ class AudioFile:
     path: Path
     extension: str = field(init=False)
     size: int = field(init=False)
+    mtime_ns: int = field(init=False)
 
     def __post_init__(self) -> None:
+        stat = self.path.stat()
         self.extension = self.path.suffix.lower()
-        self.size = self.path.stat().st_size
+        self.size = stat.st_size
+        self.mtime_ns = stat.st_mtime_ns
 
 
 class FileScanner:

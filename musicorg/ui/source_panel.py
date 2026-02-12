@@ -7,14 +7,17 @@ from pathlib import Path
 from PySide6.QtCore import QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QComboBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+    QHBoxLayout, QLabel, QLineEdit, QListWidgetItem,
     QMessageBox, QPushButton, QSplitter, QVBoxLayout, QWidget,
 )
 
 from musicorg.ui.models.file_table_model import FileTableRow
+from musicorg.ui.widgets.album_browser import AlbumBrowser
+from musicorg.ui.widgets.alphabet_bar import AlphabetBar
+from musicorg.ui.widgets.artist_list import ArtistListWidget, ROLE_ARTIST_KEY
 from musicorg.ui.widgets.dir_picker import DirPicker
-from musicorg.ui.widgets.file_table import FileTable
 from musicorg.ui.widgets.progress_bar import ProgressIndicator
+from musicorg.ui.widgets.selection_manager import SelectionManager
 from musicorg.workers.scan_worker import ScanWorker
 from musicorg.workers.tag_read_worker import TagReadWorker
 
@@ -31,11 +34,12 @@ class SourcePanel(QWidget):
         self._tag_worker: TagReadWorker | None = None
         self._tag_thread: QThread | None = None
         self._scanned_sizes: dict[Path, int] = {}
+        self._cache_db_path = ""
         self._all_rows: list[FileTableRow] = []
         self._library_index: dict[str, dict[str, list[FileTableRow]]] = {}
+        self._all_artists: list[str] = []
+        self._artist_meta: dict[str, tuple[QPixmap, int]] = {}
         self._active_artist: str = ""
-        self._active_album: str = ""
-        self._updating_filters = False
         self._scan_in_progress = False
         self._scan_target_path = ""
         self._last_scanned_path = ""
@@ -44,6 +48,9 @@ class SourcePanel(QWidget):
         self._auto_scan_timer.setSingleShot(True)
         self._auto_scan_timer.setInterval(400)
         self._auto_scan_timer.timeout.connect(self._trigger_auto_scan)
+
+        self._selection_manager = SelectionManager(self)
+        self._selection_manager.selection_changed.connect(self._on_selection_changed)
 
         self._setup_ui()
 
@@ -69,17 +76,26 @@ class SourcePanel(QWidget):
         self._send_to_editor_btn.setEnabled(False)
         self._send_to_autotag_btn = QPushButton("Send to Auto-Tag")
         self._send_to_autotag_btn.setEnabled(False)
+        self._select_all_btn = QPushButton("Select All")
+        self._select_all_btn.setEnabled(False)
+        self._select_all_btn.clicked.connect(self._select_all_visible_tracks)
+        self._deselect_all_btn = QPushButton("Deselect All")
+        self._deselect_all_btn.setEnabled(False)
+        self._deselect_all_btn.clicked.connect(self._deselect_all_tracks)
         btn_layout.addWidget(self._scan_btn)
+        btn_layout.addWidget(self._select_all_btn)
+        btn_layout.addWidget(self._deselect_all_btn)
         btn_layout.addStretch()
         btn_layout.addWidget(self._send_to_editor_btn)
         btn_layout.addWidget(self._send_to_autotag_btn)
         layout.addLayout(btn_layout)
 
-        # Browser layout: artists sidebar + album/track content.
+        # Browser layout: artists sidebar + album browser
         browser_splitter = QSplitter(Qt.Orientation.Horizontal)
         browser_splitter.setChildrenCollapsible(False)
         browser_splitter.setHandleWidth(2)
 
+        # Left pane: artist list
         artist_pane = QWidget()
         artist_pane.setMinimumWidth(230)
         artist_layout = QVBoxLayout(artist_pane)
@@ -89,56 +105,24 @@ class SourcePanel(QWidget):
         artist_header.setObjectName("SectionHeader")
         artist_header.setContentsMargins(6, 6, 6, 2)
         artist_layout.addWidget(artist_header)
-        self._artist_list = QListWidget()
-        self._artist_list.setUniformItemSizes(True)
-        self._artist_list.currentItemChanged.connect(self._on_artist_changed)
-        artist_layout.addWidget(self._artist_list)
+        self._artist_filter = QLineEdit()
+        self._artist_filter.setPlaceholderText("Filter artists...")
+        self._artist_filter.textChanged.connect(self._apply_artist_filter)
+        artist_layout.addWidget(self._artist_filter)
+        self._artist_list_widget = ArtistListWidget()
+        self._artist_list_widget.currentItemChanged.connect(self._on_artist_changed)
+        artist_layout.addWidget(self._artist_list_widget)
 
+        # Right pane: alphabet bar + album browser
         content_pane = QWidget()
         content_layout = QVBoxLayout(content_pane)
         content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(6)
-        content_header = QLabel("ALBUM AND TRACKS")
-        content_header.setObjectName("SectionHeader")
-        content_header.setContentsMargins(6, 6, 6, 2)
-        content_layout.addWidget(content_header)
-
-        top_row = QHBoxLayout()
-        top_row.setContentsMargins(0, 0, 0, 0)
-        top_row.setSpacing(12)
-        self._cover_label = QLabel("No Cover")
-        self._cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._cover_label.setMinimumSize(160, 160)
-        self._cover_label.setMaximumSize(200, 200)
-        self._cover_label.setStyleSheet(
-            "border: 1px solid #2f3743; border-radius: 6px; color: #9aa7bb;"
-        )
-        top_row.addWidget(self._cover_label, 0)
-
-        meta_layout = QVBoxLayout()
-        meta_layout.setContentsMargins(0, 0, 0, 0)
-        meta_layout.setSpacing(4)
-        self._album_title_label = QLabel("No album selected")
-        self._album_title_label.setStyleSheet("font-size: 15pt; font-weight: 700;")
-        self._album_meta_label = QLabel("Scan your library to begin browsing.")
-        self._album_meta_label.setStyleSheet("color: #95a2b6;")
-        album_select_row = QHBoxLayout()
-        album_select_row.setContentsMargins(0, 4, 0, 0)
-        album_select_row.setSpacing(6)
-        album_select_row.addWidget(QLabel("Album:"))
-        self._album_combo = QComboBox()
-        self._album_combo.currentIndexChanged.connect(self._on_album_changed)
-        album_select_row.addWidget(self._album_combo, 1)
-        meta_layout.addWidget(self._album_title_label)
-        meta_layout.addWidget(self._album_meta_label)
-        meta_layout.addLayout(album_select_row)
-        meta_layout.addStretch()
-        top_row.addLayout(meta_layout, 1)
-        content_layout.addLayout(top_row)
-
-        self._file_table = FileTable()
-        self._file_table.selection_changed.connect(self._on_selection_changed)
-        content_layout.addWidget(self._file_table, 1)
+        content_layout.setSpacing(4)
+        self._alphabet_bar = AlphabetBar()
+        self._alphabet_bar.letter_clicked.connect(self._on_letter_clicked)
+        content_layout.addWidget(self._alphabet_bar)
+        self._album_browser = AlbumBrowser()
+        content_layout.addWidget(self._album_browser, 1)
 
         browser_splitter.addWidget(artist_pane)
         browser_splitter.addWidget(content_pane)
@@ -157,6 +141,9 @@ class SourcePanel(QWidget):
     def source_dir(self) -> str:
         return self._dir_picker.path()
 
+    def set_cache_db_path(self, path: str) -> None:
+        self._cache_db_path = path
+
     def connect_send_to_editor(self, slot) -> None:
         self._send_to_editor_btn.clicked.connect(
             lambda: slot(self._get_selected_paths())
@@ -168,14 +155,33 @@ class SourcePanel(QWidget):
         )
 
     def _get_selected_paths(self) -> list[Path]:
-        indices = self._file_table.selected_indices()
-        return self._file_table.file_model.get_paths(indices)
+        return self._selection_manager.selected_paths()
 
-    def _on_selection_changed(self, indices: list[int]) -> None:
-        has_selection = len(indices) > 0
+    def _on_selection_changed(self, paths: list[Path]) -> None:
+        has_selection = len(paths) > 0
         self._send_to_editor_btn.setEnabled(has_selection)
         self._send_to_autotag_btn.setEnabled(has_selection)
-        self.files_selected.emit(self._get_selected_paths() if has_selection else [])
+        self._update_selection_action_buttons()
+        self.files_selected.emit(paths if has_selection else [])
+
+    def _visible_paths(self) -> list[Path]:
+        albums = self._library_index.get(self._active_artist, {})
+        return [row.path for album_rows in albums.values() for row in album_rows]
+
+    def _update_selection_action_buttons(self) -> None:
+        visible_paths = self._visible_paths()
+        has_visible = bool(visible_paths)
+        has_selection = bool(self._selection_manager.selected_paths())
+        self._select_all_btn.setEnabled(has_visible)
+        self._deselect_all_btn.setEnabled(has_visible and has_selection)
+
+    def _select_all_visible_tracks(self) -> None:
+        visible_paths = self._visible_paths()
+        if visible_paths:
+            self._selection_manager.select_all(visible_paths)
+
+    def _deselect_all_tracks(self) -> None:
+        self._selection_manager.clear()
 
     @staticmethod
     def _normalize_path(path: str) -> str:
@@ -237,6 +243,8 @@ class SourcePanel(QWidget):
         self._progress.update_progress(0, 0, "Reading tags...")
 
         paths = [af.path for af in audio_files]
+        mtimes_ns = [af.mtime_ns for af in audio_files]
+        sizes = [af.size for af in audio_files]
         self._scanned_sizes = {af.path: af.size for af in audio_files}
 
         if not paths:
@@ -247,7 +255,12 @@ class SourcePanel(QWidget):
             self._run_pending_auto_scan()
             return
 
-        self._tag_worker = TagReadWorker(paths)
+        self._tag_worker = TagReadWorker(
+            paths,
+            sizes=sizes,
+            mtimes_ns=mtimes_ns,
+            cache_db_path=self._cache_db_path,
+        )
         self._tag_thread = QThread()
         self._tag_worker.moveToThread(self._tag_thread)
         self._tag_thread.started.connect(self._tag_worker.run)
@@ -271,7 +284,31 @@ class SourcePanel(QWidget):
     def _on_tag_read_progress(self, current: int, total: int, message: str) -> None:
         self._progress.update_progress(current, total, f"Reading: {message}")
 
-    def _on_tags_read(self, results: list) -> None:
+    def _on_tags_read(self, payload: object) -> None:
+        results = payload
+        failures: list[tuple[Path, str]] = []
+        cache_hits = 0
+        cache_misses = 0
+        if isinstance(payload, dict):
+            results = payload.get("results", [])
+            try:
+                cache_hits = int(payload.get("cache_hits", 0))
+            except (TypeError, ValueError):
+                cache_hits = 0
+            try:
+                cache_misses = int(payload.get("cache_misses", 0))
+            except (TypeError, ValueError):
+                cache_misses = 0
+            raw_failures = payload.get("failures", [])
+            if isinstance(raw_failures, list):
+                for item in raw_failures:
+                    if not isinstance(item, (list, tuple)) or len(item) != 2:
+                        continue
+                    path, msg = item
+                    failures.append((Path(path), str(msg)))
+        if not isinstance(results, list):
+            results = []
+
         rows: list[FileTableRow] = []
         for path, tag_data in results:
             size = self._scanned_sizes.get(path, 0)
@@ -279,8 +316,26 @@ class SourcePanel(QWidget):
 
         self._all_rows = rows
         self._build_library_index(rows)
+        self._strip_redundant_artwork()
         self._populate_artist_list()
-        self._progress.finish(f"Found {len(rows)} files")
+
+        summary = (
+            f"Found {len(rows)} files ({cache_hits} cached, {cache_misses} read)"
+        )
+        if failures:
+            self._progress.finish(f"{summary}, {len(failures)} tag read errors")
+            preview = "\n".join(
+                f"- {path.name}: {error}" for path, error in failures[:8]
+            )
+            if len(failures) > 8:
+                preview += f"\n... and {len(failures) - 8} more"
+            QMessageBox.warning(
+                self,
+                "Tag Read Warnings",
+                f"Some files could not be read:\n{preview}",
+            )
+        else:
+            self._progress.finish(summary)
         self._scan_btn.setEnabled(True)
         self._scan_in_progress = False
         self._last_scanned_path = self._scan_target_path
@@ -305,22 +360,81 @@ class SourcePanel(QWidget):
                 )
         self._library_index = index
 
+    def _strip_redundant_artwork(self) -> None:
+        for albums in self._library_index.values():
+            for album_rows in albums.values():
+                kept_artwork = False
+                for row in album_rows:
+                    if not row.tags.artwork_data:
+                        continue
+                    if not kept_artwork:
+                        kept_artwork = True
+                        continue
+                    row.tags.artwork_data = None
+                    row.tags.artwork_mime = ""
+
     def _populate_artist_list(self) -> None:
-        self._artist_list.clear()
-        if not self._library_index:
-            self._apply_filters()
+        self._all_artists = sorted(self._library_index)
+        self._artist_meta = {}
+        for artist in self._all_artists:
+            albums = self._library_index[artist]
+            self._artist_meta[artist] = (self._build_artist_thumbnail(albums), len(albums))
+        self._apply_artist_filter()
+
+    def _build_artist_thumbnail(self, albums: dict[str, list[FileTableRow]]) -> QPixmap:
+        thumbnail = QPixmap()
+        for album_rows in albums.values():
+            for row in album_rows:
+                if row.tags.artwork_data and thumbnail.loadFromData(row.tags.artwork_data):
+                    return thumbnail
+        return thumbnail
+
+    def _apply_artist_filter(self) -> None:
+        query = self._artist_filter.text().strip().lower()
+        filtered_artists = [
+            artist for artist in self._all_artists
+            if not query or query in artist.lower()
+        ]
+
+        self._artist_list_widget.blockSignals(True)
+        self._artist_list_widget.clear()
+
+        available_letters: set[str] = set()
+        for artist in filtered_artists:
+            thumbnail, album_count = self._artist_meta.get(artist, (QPixmap(), 0))
+            self._artist_list_widget.add_artist(artist, artist, thumbnail, album_count)
+
+            first_char = artist[0].upper() if artist else "#"
+            if first_char.isalpha():
+                available_letters.add(first_char)
+            else:
+                available_letters.add("#")
+
+        self._artist_list_widget.blockSignals(False)
+        self._alphabet_bar.set_available_letters(available_letters)
+
+        if not filtered_artists:
+            self._active_artist = ""
+            self._selection_manager.clear()
+            self._album_browser.clear()
+            self._alphabet_bar.set_active_letter("")
+            self._update_selection_action_buttons()
             return
 
-        for artist in sorted(self._library_index):
-            albums = self._library_index[artist]
-            album_count = len(albums)
-            item = QListWidgetItem(
-                f"{artist} ({album_count} album{'s' if album_count != 1 else ''})"
-            )
-            item.setData(Qt.ItemDataRole.UserRole, artist)
-            self._artist_list.addItem(item)
+        target_artist = self._active_artist
+        if target_artist not in filtered_artists:
+            target_artist = filtered_artists[0]
+        self._select_artist(target_artist)
 
-        self._artist_list.setCurrentRow(0)
+    def _select_artist(self, artist_key: str) -> None:
+        for i in range(self._artist_list_widget.count()):
+            item = self._artist_list_widget.item(i)
+            if item is None:
+                continue
+            if str(item.data(ROLE_ARTIST_KEY) or "") == artist_key:
+                self._artist_list_widget.setCurrentItem(item)
+                self._artist_list_widget.scrollToItem(item)
+                return
 
     def _on_artist_changed(
         self,
@@ -328,100 +442,51 @@ class SourcePanel(QWidget):
         _previous: QListWidgetItem | None,
     ) -> None:
         self._active_artist = ""
+        self._selection_manager.clear()
         if current is not None:
-            self._active_artist = str(current.data(Qt.ItemDataRole.UserRole) or "")
+            self._active_artist = str(current.data(ROLE_ARTIST_KEY) or "")
 
-        self._updating_filters = True
-        self._album_combo.blockSignals(True)
-        self._album_combo.clear()
         albums = self._library_index.get(self._active_artist, {})
-        for album in sorted(albums):
-            track_count = len(albums[album])
-            self._album_combo.addItem(
-                f"{album} ({track_count} track{'s' if track_count != 1 else ''})",
-                album,
-            )
-        self._album_combo.blockSignals(False)
-        self._updating_filters = False
+        self._album_browser.set_albums(albums, self._selection_manager)
+        self._album_browser.scroll_to_top()
 
-        if self._album_combo.count() > 0:
-            self._album_combo.setCurrentIndex(0)
-            self._active_album = str(self._album_combo.currentData() or "")
-            self._apply_filters()
-        else:
-            self._active_album = ""
-            self._apply_filters()
-
-    def _on_album_changed(self, _index: int) -> None:
-        if self._updating_filters:
-            return
-        self._active_album = str(self._album_combo.currentData() or "")
-        self._apply_filters()
-
-    def _apply_filters(self) -> None:
-        rows: list[FileTableRow] = []
+        # Update alphabet bar active letter
         if self._active_artist:
-            albums = self._library_index.get(self._active_artist, {})
-            if self._active_album:
-                rows = list(albums.get(self._active_album, []))
+            first_char = self._active_artist[0].upper()
+            if first_char.isalpha():
+                self._alphabet_bar.set_active_letter(first_char)
             else:
-                for album_rows in albums.values():
-                    rows.extend(album_rows)
+                self._alphabet_bar.set_active_letter("#")
+        else:
+            self._alphabet_bar.set_active_letter("")
+        self._update_selection_action_buttons()
 
-        self._file_table.file_model.set_data(rows)
-        self._on_selection_changed([])
-        self._update_album_header(rows)
-        self._update_cover(rows)
-
-    def _update_album_header(self, rows: list[FileTableRow]) -> None:
-        if not rows:
-            self._album_title_label.setText("No album selected")
-            self._album_meta_label.setText("Scan your library to begin browsing.")
-            return
-        track_count = len(rows)
-        self._album_title_label.setText(self._active_album or "All Albums")
-        self._album_meta_label.setText(
-            f"{self._active_artist} \u2022 {track_count} track{'s' if track_count != 1 else ''}"
-        )
-
-    def _update_cover(self, rows: list[FileTableRow]) -> None:
-        artwork = b""
-        for row in rows:
-            if row.tags.artwork_data:
-                artwork = row.tags.artwork_data
-                break
-        if not artwork:
-            self._cover_label.setPixmap(QPixmap())
-            self._cover_label.setText("No Cover")
-            return
-
-        pixmap = QPixmap()
-        if not pixmap.loadFromData(artwork):
-            self._cover_label.setPixmap(QPixmap())
-            self._cover_label.setText("No Cover")
-            return
-
-        scaled = pixmap.scaled(
-            self._cover_label.size(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        self._cover_label.setText("")
-        self._cover_label.setPixmap(scaled)
+    def _on_letter_clicked(self, letter: str) -> None:
+        """Find the first artist starting with the given letter and select it."""
+        for i in range(self._artist_list_widget.count()):
+            item = self._artist_list_widget.item(i)
+            if item is None:
+                continue
+            artist_key = str(item.data(ROLE_ARTIST_KEY) or "")
+            if not artist_key:
+                continue
+            first_char = artist_key[0].upper()
+            match = (letter == "#" and not first_char.isalpha()) or first_char == letter
+            if match:
+                self._select_artist(artist_key)
+                return
 
     def _reset_library_view(self) -> None:
         self._all_rows = []
         self._library_index = {}
+        self._all_artists = []
+        self._artist_meta = {}
         self._active_artist = ""
-        self._active_album = ""
-        self._artist_list.clear()
-        self._album_combo.clear()
-        self._file_table.file_model.clear()
-        self._album_title_label.setText("No album selected")
-        self._album_meta_label.setText("Scan your library to begin browsing.")
-        self._cover_label.setPixmap(QPixmap())
-        self._cover_label.setText("No Cover")
-        self._on_selection_changed([])
+        self._artist_list_widget.clear()
+        self._album_browser.clear()
+        self._alphabet_bar.set_available_letters(set())
+        self._alphabet_bar.set_active_letter("")
+        self._selection_manager.clear()
 
     def _on_scan_error(self, error_msg: str) -> None:
         self._progress.finish(f"Error: {error_msg}")
@@ -443,17 +508,78 @@ class SourcePanel(QWidget):
         self._start_scan(force=False, suppress_errors=True)
 
     def _cleanup_scan_thread(self) -> None:
-        if self._worker:
-            self._worker.deleteLater()
+        worker = self._worker
+        thread = self._thread
+        if worker and thread:
+            try:
+                worker.progress.disconnect(self._on_scan_progress)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                worker.finished.disconnect(self._on_scan_finished)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                worker.error.disconnect(self._on_scan_error)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                worker.finished.disconnect(thread.quit)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                worker.error.disconnect(thread.quit)
+            except (RuntimeError, TypeError):
+                pass
+        if worker:
+            worker.deleteLater()
             self._worker = None
-        if self._thread:
-            self._thread.deleteLater()
+        if thread:
+            thread.deleteLater()
             self._thread = None
 
     def _cleanup_tag_thread(self) -> None:
-        if self._tag_worker:
-            self._tag_worker.deleteLater()
+        worker = self._tag_worker
+        thread = self._tag_thread
+        if worker and thread:
+            try:
+                worker.progress.disconnect(self._on_tag_read_progress)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                worker.finished.disconnect(self._on_tags_read)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                worker.error.disconnect(self._on_scan_error)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                worker.finished.disconnect(thread.quit)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                worker.error.disconnect(thread.quit)
+            except (RuntimeError, TypeError):
+                pass
+        if worker:
+            worker.deleteLater()
             self._tag_worker = None
-        if self._tag_thread:
-            self._tag_thread.deleteLater()
+        if thread:
+            thread.deleteLater()
             self._tag_thread = None
+
+    def shutdown(self, timeout_ms: int = 3000) -> None:
+        self._auto_scan_timer.stop()
+        if self._worker:
+            self._worker.cancel()
+        if self._tag_worker:
+            self._tag_worker.cancel()
+        if self._thread and self._thread.isRunning():
+            self._thread.quit()
+            self._thread.wait()
+        if self._tag_thread and self._tag_thread.isRunning():
+            self._tag_thread.quit()
+            self._tag_thread.wait()
+        self._cleanup_scan_thread()
+        self._cleanup_tag_thread()

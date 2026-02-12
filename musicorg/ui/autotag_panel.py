@@ -34,6 +34,7 @@ class AutoTagPanel(QWidget):
         self._search_in_progress = False
         self._apply_worker: ApplyMatchWorker | None = None
         self._apply_thread: QThread | None = None
+        self._cache_db_path = ""
 
         self._setup_ui()
 
@@ -146,6 +147,9 @@ class AutoTagPanel(QWidget):
         layout.addWidget(self._progress)
         self._refresh_search_controls()
 
+    def set_cache_db_path(self, path: str) -> None:
+        self._cache_db_path = path
+
     def load_files(self, paths: list[Path]) -> None:
         """Load files for auto-tagging."""
         self._files = list(paths)
@@ -166,8 +170,10 @@ class AutoTagPanel(QWidget):
                 tags = tm.read(self._files[0])
                 self._artist_edit.setText(tags.albumartist or tags.artist)
                 self._album_edit.setText(tags.album)
-            except Exception:
-                pass
+            except Exception as e:
+                self._progress.finish(
+                    f"Loaded files, but could not read tag hints: {e}"
+                )
         self._refresh_search_controls()
 
     def _start_search(self) -> None:
@@ -277,7 +283,11 @@ class AutoTagPanel(QWidget):
         self._apply_btn.setEnabled(False)
         self._progress.start("Applying match...")
 
-        self._apply_worker = ApplyMatchWorker(self._files, candidate)
+        self._apply_worker = ApplyMatchWorker(
+            self._files,
+            candidate,
+            cache_db_path=self._cache_db_path,
+        )
         self._apply_thread = QThread()
         self._apply_worker.moveToThread(self._apply_thread)
         self._apply_thread.started.connect(self._apply_worker.run)
@@ -309,6 +319,26 @@ class AutoTagPanel(QWidget):
         QMessageBox.critical(self, "Apply Error", msg)
 
     def _cleanup_search(self, worker: AutoTagWorker, thread: QThread) -> None:
+        try:
+            worker.progress.disconnect(self._on_search_progress)
+        except (RuntimeError, TypeError):
+            pass
+        try:
+            worker.finished.disconnect(self._on_search_done)
+        except (RuntimeError, TypeError):
+            pass
+        try:
+            worker.error.disconnect(self._on_search_error)
+        except (RuntimeError, TypeError):
+            pass
+        try:
+            worker.finished.disconnect(thread.quit)
+        except (RuntimeError, TypeError):
+            pass
+        try:
+            worker.error.disconnect(thread.quit)
+        except (RuntimeError, TypeError):
+            pass
         worker.deleteLater()
         thread.deleteLater()
         if self._search_worker is worker:
@@ -317,9 +347,47 @@ class AutoTagPanel(QWidget):
             self._search_thread = None
 
     def _cleanup_apply(self) -> None:
-        if self._apply_worker:
-            self._apply_worker.deleteLater()
+        worker = self._apply_worker
+        thread = self._apply_thread
+        if worker and thread:
+            try:
+                worker.progress.disconnect(self._on_apply_progress)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                worker.finished.disconnect(self._on_apply_done)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                worker.error.disconnect(self._on_apply_error)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                worker.finished.disconnect(thread.quit)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                worker.error.disconnect(thread.quit)
+            except (RuntimeError, TypeError):
+                pass
+        if worker:
+            worker.deleteLater()
             self._apply_worker = None
-        if self._apply_thread:
-            self._apply_thread.deleteLater()
+        if thread:
+            thread.deleteLater()
             self._apply_thread = None
+
+    def shutdown(self, timeout_ms: int = 3000) -> None:
+        if self._search_worker:
+            self._search_worker.cancel()
+        if self._apply_worker:
+            self._apply_worker.cancel()
+        if self._search_thread and self._search_thread.isRunning():
+            self._search_thread.quit()
+            self._search_thread.wait()
+        if self._apply_thread and self._apply_thread.isRunning():
+            self._apply_thread.quit()
+            self._apply_thread.wait()
+        if self._search_worker and self._search_thread:
+            self._cleanup_search(self._search_worker, self._search_thread)
+        self._cleanup_apply()

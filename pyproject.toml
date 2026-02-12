@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "musicorg"
@@ -18,5 +18,15 @@ dependencies = [
 [project.scripts]
 musicorg = "musicorg.__main__:main"
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-qt>=4.4",
+]
+extras = [
+    "send2trash>=1.8.0",
+]
+
 [tool.pytest.ini_options]
+addopts = "-v --tb=short"
 testpaths = ["tests"]

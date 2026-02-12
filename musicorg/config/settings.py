@@ -52,6 +52,12 @@ class AppSettings:
     def path_format(self, value: str) -> None:
         self._qs.setValue("sync/path_format", value)
 
+    # -- tag cache --
+
+    @property
+    def tag_cache_db_path(self) -> str:
+        return str(self._app_data_dir() / "tag_cache.db")
+
     # -- beets db --
 
     @property

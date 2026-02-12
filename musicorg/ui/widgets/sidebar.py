@@ -55,6 +55,7 @@ class SidebarNav(QFrame):
         ("\u270E", "Tag Editor"),
         ("\u2728", "Auto-Tag"),
         ("\u21C4", "Sync"),
+        ("\U0001F50D", "Duplicates"),
     ]
 
     def __init__(self, parent: QWidget | None = None) -> None:

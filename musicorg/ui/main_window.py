@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from musicorg.ui.autotag_panel import AutoTagPanel
+from musicorg.ui.duplicates_panel import DuplicatesPanel
 from musicorg.ui.settings_dialog import SettingsDialog
 from musicorg.ui.source_panel import SourcePanel
 from musicorg.ui.sync_panel import SyncPanel
@@ -64,11 +65,18 @@ class MainWindow(QMainWindow):
         self._tag_editor_panel = TagEditorPanel()
         self._autotag_panel = AutoTagPanel()
         self._sync_panel = SyncPanel()
+        self._duplicates_panel = DuplicatesPanel()
+        cache_path = self._settings.tag_cache_db_path
+        self._source_panel.set_cache_db_path(cache_path)
+        self._tag_editor_panel.set_cache_db_path(cache_path)
+        self._autotag_panel.set_cache_db_path(cache_path)
+        self._duplicates_panel.set_cache_db_path(cache_path)
 
         self._stack.addWidget(self._source_panel)      # index 0
         self._stack.addWidget(self._tag_editor_panel)   # index 1
         self._stack.addWidget(self._autotag_panel)      # index 2
         self._stack.addWidget(self._sync_panel)         # index 3
+        self._stack.addWidget(self._duplicates_panel)   # index 4
         content_row.addWidget(self._stack, 1)
 
         outer.addLayout(content_row, 1)
@@ -81,6 +89,7 @@ class MainWindow(QMainWindow):
         if self._settings.source_dir:
             self._source_panel.set_source_dir(self._settings.source_dir)
             self._sync_panel.set_source_dir(self._settings.source_dir)
+            self._duplicates_panel.set_source_dir(self._settings.source_dir)
         if self._settings.dest_dir:
             self._sync_panel.set_dest_dir(self._settings.dest_dir)
         self._sync_panel.set_path_format(self._settings.path_format)
@@ -141,6 +150,7 @@ class MainWindow(QMainWindow):
             if self._settings.source_dir:
                 self._source_panel.set_source_dir(self._settings.source_dir)
                 self._sync_panel.set_source_dir(self._settings.source_dir)
+                self._duplicates_panel.set_source_dir(self._settings.source_dir)
             if self._settings.dest_dir:
                 self._sync_panel.set_dest_dir(self._settings.dest_dir)
             self._sync_panel.set_path_format(self._settings.path_format)
@@ -165,5 +175,10 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(geo)
 
     def closeEvent(self, event) -> None:
+        self._source_panel.shutdown()
+        self._tag_editor_panel.shutdown()
+        self._autotag_panel.shutdown()
+        self._sync_panel.shutdown()
+        self._duplicates_panel.shutdown()
         self._settings.window_geometry = self.saveGeometry()
         super().closeEvent(event)

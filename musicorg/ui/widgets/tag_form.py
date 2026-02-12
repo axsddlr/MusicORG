@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QSpinBox, QWidget,
+    QMessageBox, QSpinBox, QWidget,
 )
 
 from musicorg.core.tagger import TagData
@@ -15,6 +15,7 @@ from musicorg.core.tagger import TagData
 
 class TagForm(QWidget):
     """A form layout showing all editable tag fields."""
+    _MAX_ARTWORK_BYTES = 10 * 1024 * 1024
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -120,6 +121,18 @@ class TagForm(QWidget):
         if not file_path:
             return
         path = Path(file_path)
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        if size > self._MAX_ARTWORK_BYTES:
+            max_mb = self._MAX_ARTWORK_BYTES // (1024 * 1024)
+            QMessageBox.warning(
+                self,
+                "Artwork Too Large",
+                f"Please choose an image smaller than {max_mb} MB.",
+            )
+            return
         try:
             self._artwork_data = path.read_bytes()
         except OSError:

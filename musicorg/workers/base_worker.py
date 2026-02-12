@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from threading import Event
+
 from PySide6.QtCore import QObject, Signal
 
 
@@ -27,10 +29,14 @@ class BaseWorker(QObject):
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self._is_cancelled = False
+        self._cancel_event = Event()
 
     def cancel(self) -> None:
-        self._is_cancelled = True
+        self._cancel_event.set()
+
+    @property
+    def _is_cancelled(self) -> bool:
+        return self._cancel_event.is_set()
 
     def run(self) -> None:
         """Override in subclass. Called when thread starts."""

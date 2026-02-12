@@ -100,6 +100,13 @@ class SyncPanel(QWidget):
         self._format_edit.setText(fmt)
 
     def _start_plan(self) -> None:
+        if self._plan_thread and self._plan_thread.isRunning():
+            QMessageBox.information(self, "Plan In Progress", "Sync planning is already running.")
+            return
+        if self._exec_thread and self._exec_thread.isRunning():
+            QMessageBox.information(self, "Sync In Progress", "Wait for the current sync to finish.")
+            return
+
         source = self._source_picker.path()
         dest = self._dest_picker.path()
         if not source:
@@ -174,6 +181,9 @@ class SyncPanel(QWidget):
     def _start_sync(self) -> None:
         if not self._plan:
             return
+        if self._exec_thread and self._exec_thread.isRunning():
+            QMessageBox.information(self, "Sync In Progress", "A sync job is already running.")
+            return
 
         self._plan_btn.setEnabled(False)
         self._sync_btn.setEnabled(False)
@@ -234,17 +244,85 @@ class SyncPanel(QWidget):
         self._progress.finish("Sync cancelled")
 
     def _cleanup_plan(self) -> None:
-        if self._plan_worker:
-            self._plan_worker.deleteLater()
+        worker = self._plan_worker
+        thread = self._plan_thread
+        if worker and thread:
+            try:
+                worker.progress.disconnect(self._on_plan_progress)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                worker.finished.disconnect(self._on_plan_done)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                worker.error.disconnect(self._on_plan_error)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                worker.finished.disconnect(thread.quit)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                worker.error.disconnect(thread.quit)
+            except (RuntimeError, TypeError):
+                pass
+        if worker:
+            worker.deleteLater()
             self._plan_worker = None
-        if self._plan_thread:
-            self._plan_thread.deleteLater()
+        if thread:
+            thread.deleteLater()
             self._plan_thread = None
 
     def _cleanup_exec(self) -> None:
-        if self._exec_worker:
-            self._exec_worker.deleteLater()
+        worker = self._exec_worker
+        thread = self._exec_thread
+        if worker and thread:
+            try:
+                worker.progress.disconnect(self._on_sync_progress)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                worker.finished.disconnect(self._on_sync_done)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                worker.error.disconnect(self._on_sync_error)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                worker.cancelled.disconnect(self._on_sync_cancelled)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                worker.finished.disconnect(thread.quit)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                worker.error.disconnect(thread.quit)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                worker.cancelled.disconnect(thread.quit)
+            except (RuntimeError, TypeError):
+                pass
+        if worker:
+            worker.deleteLater()
             self._exec_worker = None
-        if self._exec_thread:
-            self._exec_thread.deleteLater()
+        if thread:
+            thread.deleteLater()
             self._exec_thread = None
+
+    def shutdown(self, timeout_ms: int = 3000) -> None:
+        if self._plan_worker:
+            self._plan_worker.cancel()
+        if self._exec_worker:
+            self._exec_worker.cancel()
+        if self._plan_thread and self._plan_thread.isRunning():
+            self._plan_thread.quit()
+            self._plan_thread.wait()
+        if self._exec_thread and self._exec_thread.isRunning():
+            self._exec_thread.quit()
+            self._exec_thread.wait()
+        self._cleanup_plan()
+        self._cleanup_exec()

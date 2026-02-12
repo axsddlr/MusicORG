@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from musicorg.core.autotagger import AutoTagger
+from musicorg.core.tag_cache import TagCache
 from musicorg.workers.base_worker import BaseWorker
 
 if TYPE_CHECKING:
@@ -51,10 +52,17 @@ class AutoTagWorker(BaseWorker):
 class ApplyMatchWorker(BaseWorker):
     """Applies a match to files in a background thread."""
 
-    def __init__(self, paths: list[str | Path], match: MatchCandidate) -> None:
+    def __init__(
+        self,
+        paths: list[str | Path],
+        match: MatchCandidate,
+        *,
+        cache_db_path: str = "",
+    ) -> None:
         super().__init__()
         self._paths = [str(p) for p in paths]
         self._match = match
+        self._cache_db_path = cache_db_path
 
     def run(self) -> None:
         self.started.emit()
@@ -62,6 +70,20 @@ class ApplyMatchWorker(BaseWorker):
             tagger = AutoTagger()
             self.progress.emit(0, 1, "Applying match...")
             success = tagger.apply_match(self._paths, self._match)
+            if success and self._cache_db_path:
+                cache: TagCache | None = None
+                try:
+                    cache = TagCache(self._cache_db_path)
+                    cache.open()
+                    cache.invalidate_many(self._paths)
+                except Exception:
+                    pass
+                finally:
+                    if cache:
+                        try:
+                            cache.close()
+                        except Exception:
+                            pass
             self.progress.emit(1, 1, "Done")
             self.finished.emit(success)
         except Exception as e:
