@@ -1,4 +1,4 @@
-"""Worker for querying MusicBrainz/Discogs via beets autotag."""
+"""Worker for querying MusicBrainz/Discogs metadata sources."""
 
 from __future__ import annotations
 
@@ -20,33 +20,41 @@ class AutoTagWorker(BaseWorker):
                  artist_hint: str = "",
                  album_hint: str = "",
                  title_hint: str = "",
-                 mode: str = "album") -> None:
+                 mode: str = "album",
+                 discogs_token: str = "") -> None:
         super().__init__()
         self._paths = [str(p) for p in paths]
         self._artist_hint = artist_hint
         self._album_hint = album_hint
         self._title_hint = title_hint
         self._mode = mode
+        self._discogs_token = discogs_token
 
     def run(self) -> None:
         self.started.emit()
         try:
-            tagger = AutoTagger()
+            tagger = AutoTagger(discogs_token=self._discogs_token)
             self.progress.emit(0, 1, "Searching...")
             if self._mode == "album":
-                results = tagger.search_album(
+                payload = tagger.search_album_with_diagnostics(
                     self._paths,
                     artist_hint=self._artist_hint,
                     album_hint=self._album_hint,
                 )
             else:
-                results = tagger.search_item(
+                payload = tagger.search_item_with_diagnostics(
                     self._paths[0],
                     artist_hint=self._artist_hint,
                     title_hint=self._title_hint,
                 )
-            self.progress.emit(1, 1, f"Found {len(results)} candidates")
-            self.finished.emit(results)
+            candidates = payload.get("candidates", [])
+            source_errors = payload.get("source_errors", {})
+            if source_errors:
+                unavailable = ", ".join(f"{name} unavailable" for name in source_errors)
+                self.progress.emit(1, 1, f"Found {len(candidates)} candidates ({unavailable})")
+            else:
+                self.progress.emit(1, 1, f"Found {len(candidates)} candidates")
+            self.finished.emit(payload)
         except Exception as e:
             self.error.emit(str(e))
 
@@ -60,16 +68,18 @@ class ApplyMatchWorker(BaseWorker):
         match: MatchCandidate,
         *,
         cache_db_path: str = "",
+        discogs_token: str = "",
     ) -> None:
         super().__init__()
         self._paths = [str(p) for p in paths]
         self._match = match
         self._cache_db_path = cache_db_path
+        self._discogs_token = discogs_token
 
     def run(self) -> None:
         self.started.emit()
         try:
-            tagger = AutoTagger()
+            tagger = AutoTagger(discogs_token=self._discogs_token)
             self.progress.emit(0, 1, "Applying match...")
             success = tagger.apply_match(self._paths, self._match)
             if success and self._cache_db_path:

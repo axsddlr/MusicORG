@@ -70,6 +70,7 @@ class MainWindow(QMainWindow):
         self._source_panel.set_cache_db_path(cache_path)
         self._tag_editor_panel.set_cache_db_path(cache_path)
         self._autotag_panel.set_cache_db_path(cache_path)
+        self._autotag_panel.set_discogs_token(self._settings.discogs_token)
         self._duplicates_panel.set_cache_db_path(cache_path)
 
         self._stack.addWidget(self._source_panel)      # index 0
@@ -160,6 +161,7 @@ class MainWindow(QMainWindow):
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self._settings, self)
         if dialog.exec():
+            self._autotag_panel.set_discogs_token(self._settings.discogs_token)
             # Re-apply settings
             if self._settings.source_dir:
                 self._source_panel.set_source_dir(self._settings.source_dir)
@@ -177,7 +179,7 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self, "About MusicOrg",
             f"MusicOrg v{__version__}\n\n"
-            "A PySide6 desktop UI for beets music library management.\n\n"
+            "A PySide6 desktop UI for music library management.\n\n"
             "Features:\n"
             "  - ID3 tag reading/editing for MP3 and FLAC\n"
             "  - Auto-tagging via MusicBrainz + Discogs\n"

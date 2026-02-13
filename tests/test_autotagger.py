@@ -1,9 +1,23 @@
 """Tests for musicorg.core.autotagger."""
 
+from __future__ import annotations
+
+from pathlib import Path
+
 import pytest
-from collections import namedtuple
 
 from musicorg.core.autotagger import AutoTagger, MatchCandidate
+
+
+class _Artist:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+class _Release:
+    def __init__(self, title: str, artists: list[str]) -> None:
+        self.title = title
+        self.artists = [_Artist(name) for name in artists]
 
 
 class TestMatchCandidate:
@@ -32,71 +46,153 @@ class TestMatchCandidate:
 class TestAutoTagger:
     def test_search_album_empty_paths(self):
         at = AutoTagger()
-        results = at.search_album([])
-        assert results == []
+        assert at.search_album([]) == []
 
-    def test_search_item_nonexistent(self, tmp_path):
+    def test_search_item_nonexistent(self, tmp_path: Path):
         at = AutoTagger()
         fake = tmp_path / "nonexistent.mp3"
-        results = at.search_item(fake)
-        assert results == []
+        assert at.search_item(fake) == []
 
-    def test_apply_match_no_raw(self, tmp_path):
+    def test_apply_match_no_raw(self):
         at = AutoTagger()
         mc = MatchCandidate(raw_match=None)
-        result = at.apply_match([], mc)
-        assert result is False
+        assert at.apply_match(["anything.mp3"], mc) is False
 
-    def test_extract_candidates_from_proposal_like(self):
+    def test_apply_match_non_dict_raw(self):
         at = AutoTagger()
-        ProposalLike = namedtuple("ProposalLike", ["candidates"])
-        proposal = ProposalLike(candidates=["a", "b"])
-        assert at._extract_candidates(proposal) == ["a", "b"]
+        mc = MatchCandidate(raw_match="not-a-dict")
+        assert at.apply_match(["anything.mp3"], mc) is False
 
-    def test_extract_candidates_from_legacy_album_tuple(self):
+    def test_mb_artist_credit(self):
         at = AutoTagger()
-        result = ("artist", "album", ["c1", "c2"], "recommended")
-        assert at._extract_candidates(result) == ["c1", "c2"]
+        entity = {
+            "artist-credit": [
+                {"name": "Artist A", "joinphrase": " feat. "},
+                {"artist": {"name": "Artist B"}},
+            ]
+        }
+        assert at._mb_artist_credit(entity) == "Artist A feat. Artist B"
 
-    def test_extract_candidates_from_modern_album_tuple(self):
+    def test_mb_artist_credit_fallback_phrase(self):
         at = AutoTagger()
-        ProposalLike = namedtuple("ProposalLike", ["candidates"])
-        result = ("artist", "album", ProposalLike(candidates=["x"]))
-        assert at._extract_candidates(result) == ["x"]
+        entity = {"artist-credit-phrase": "Fallback Artist"}
+        assert at._mb_artist_credit(entity) == "Fallback Artist"
 
-    def test_candidate_artwork_urls_discogs_cover(self):
+    def test_mb_extract_year(self):
         at = AutoTagger()
-        info = type(
-            "Info",
-            (),
-            {
-                "cover_art_url": "https://i.discogs.com/cover.jpg",
-                "data_source": "Discogs",
-                "data_url": "",
-                "album_id": "",
-                "releasegroup_id": "",
-            },
-        )()
-        urls = at._candidate_artwork_urls(info)
-        assert urls[0] == "https://i.discogs.com/cover.jpg"
+        assert at._mb_extract_year({"date": "2004-02-01"}) == 2004
+        assert at._mb_extract_year({"first-release-date": "1999"}) == 1999
+        assert at._mb_extract_year({"date": ""}) == 0
 
-    def test_candidate_artwork_urls_musicbrainz_release(self):
+    def test_mb_artwork_urls(self):
         at = AutoTagger()
         rid = "9e0f52d6-87b2-4f57-8df2-d86f0416533a"
-        info = type(
-            "Info",
-            (),
-            {
-                "cover_art_url": "",
-                "data_source": "MusicBrainz",
-                "data_url": f"https://musicbrainz.org/release/{rid}",
-                "album_id": "",
-                "releasegroup_id": "",
-            },
-        )()
-        urls = at._candidate_artwork_urls(info)
+        rgid = "2d0f52d6-87b2-4f57-8df2-d86f0416533a"
+        urls = at._mb_artwork_urls(rid, rgid)
         assert f"https://coverartarchive.org/release/{rid}/front-500" in urls
-        assert f"https://coverartarchive.org/release/{rid}/front" in urls
+        assert f"https://coverartarchive.org/release-group/{rgid}/front" in urls
+
+    def test_discogs_distance(self):
+        at = AutoTagger()
+        close = _Release("The Dark Side of the Moon", ["Pink Floyd"])
+        far = _Release("Random Comp", ["Unknown Artist"])
+
+        close_score = at._discogs_distance("Pink Floyd", "Dark Side of the Moon", close)
+        far_score = at._discogs_distance("Pink Floyd", "Dark Side of the Moon", far)
+
+        assert 0.0 <= close_score <= 1.0
+        assert 0.0 <= far_score <= 1.0
+        assert close_score < far_score
+
+    def test_parse_duration(self):
+        at = AutoTagger()
+        assert at._parse_duration("3:45") == 225
+        assert at._parse_duration("1:02:03") == 3723
+        assert at._parse_duration("") == 0
+        assert at._parse_duration("bad") == 0
+
+    def test_parse_discogs_position(self):
+        at = AutoTagger()
+        assert at._parse_discogs_position("A1") == (1, 1)
+        assert at._parse_discogs_position("1-3") == (1, 3)
+        assert at._parse_discogs_position("7", default_disc=2) == (2, 7)
+        assert at._parse_discogs_position("CD1-03") == (1, 1)
+
+    def test_search_album_with_diagnostics_keeps_discogs_on_mb_failure(self, monkeypatch):
+        at = AutoTagger(discogs_token="token")
+        discogs_candidate = MatchCandidate(source="Discogs", album="Parachutes", distance=0.2)
+
+        monkeypatch.setattr(
+            at,
+            "_resolve_hints_from_files",
+            lambda paths, artist_hint, album_hint: ("Coldplay", "Parachutes"),
+        )
+        monkeypatch.setattr(
+            at,
+            "_search_album_mb",
+            lambda artist, album: (_ for _ in ()).throw(RuntimeError("mb network reset")),
+        )
+        monkeypatch.setattr(
+            at,
+            "_search_album_discogs",
+            lambda artist, album: [discogs_candidate],
+        )
+
+        payload = at.search_album_with_diagnostics(["dummy.mp3"])
+        assert payload["candidates"] == [discogs_candidate]
+        assert payload["source_counts"]["MusicBrainz"] == 0
+        assert payload["source_counts"]["Discogs"] == 1
+        assert "MusicBrainz" in payload["source_errors"]
+        assert "network reset" in payload["source_errors"]["MusicBrainz"]
+
+    def test_search_item_with_diagnostics_keeps_discogs_on_mb_failure(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ):
+        at = AutoTagger(discogs_token="token")
+        target = tmp_path / "song.mp3"
+        target.write_bytes(b"")
+        discogs_candidate = MatchCandidate(source="Discogs", album="Parachutes", distance=0.2)
+
+        monkeypatch.setattr(
+            at,
+            "_search_item_mb",
+            lambda artist, title: (_ for _ in ()).throw(RuntimeError("mb timeout")),
+        )
+        monkeypatch.setattr(
+            at,
+            "_search_item_discogs",
+            lambda artist, title: [discogs_candidate],
+        )
+
+        payload = at.search_item_with_diagnostics(
+            target,
+            artist_hint="Coldplay",
+            title_hint="Yellow",
+        )
+        assert payload["candidates"] == [discogs_candidate]
+        assert payload["source_counts"]["MusicBrainz"] == 0
+        assert payload["source_counts"]["Discogs"] == 1
+        assert "MusicBrainz" in payload["source_errors"]
+        assert "timeout" in payload["source_errors"]["MusicBrainz"]
+
+    def test_search_album_with_diagnostics_raises_when_all_sources_fail(self, monkeypatch):
+        at = AutoTagger()
+
+        monkeypatch.setattr(
+            at,
+            "_resolve_hints_from_files",
+            lambda paths, artist_hint, album_hint: ("Coldplay", "Parachutes"),
+        )
+        monkeypatch.setattr(
+            at,
+            "_search_album_mb",
+            lambda artist, album: (_ for _ in ()).throw(RuntimeError("mb down")),
+        )
+
+        with pytest.raises(RuntimeError, match="MusicBrainz: mb down"):
+            at.search_album_with_diagnostics(["dummy.mp3"])
 
     def test_guess_image_mime(self):
         at = AutoTagger()

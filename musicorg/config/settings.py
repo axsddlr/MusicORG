@@ -58,17 +58,6 @@ class AppSettings:
     def tag_cache_db_path(self) -> str:
         return str(self._app_data_dir() / "tag_cache.db")
 
-    # -- beets db --
-
-    @property
-    def beets_db_path(self) -> str:
-        default = str(self._app_data_dir() / "beets" / "library.db")
-        return self._qs.value("beets/db_path", default, type=str)
-
-    @beets_db_path.setter
-    def beets_db_path(self, value: str) -> None:
-        self._qs.setValue("beets/db_path", value)
-
     # -- backdrop opacity --
 
     @property
@@ -96,6 +85,3 @@ class AppSettings:
         import os
         base = Path(os.environ.get("APPDATA", Path.home() / ".config"))
         return base / "musicorg"
-
-    def beets_config_dir(self) -> Path:
-        return self._app_data_dir() / "beets"

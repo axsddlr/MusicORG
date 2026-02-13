@@ -1,4 +1,4 @@
-"""Read/write ID3 tags via mutagen (with beets Item as optional enhancement)."""
+"""Read/write ID3 tags via mutagen."""
 
 from __future__ import annotations
 

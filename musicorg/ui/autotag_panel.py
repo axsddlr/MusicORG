@@ -35,6 +35,7 @@ class AutoTagPanel(QWidget):
         self._apply_worker: ApplyMatchWorker | None = None
         self._apply_thread: QThread | None = None
         self._cache_db_path = ""
+        self._discogs_token = ""
 
         self._setup_ui()
 
@@ -93,9 +94,14 @@ class AutoTagPanel(QWidget):
         match_layout = QVBoxLayout(match_group)
         match_layout.setContentsMargins(6, 6, 6, 6)
         match_layout.setSpacing(4)
+        self._source_status_label = QLabel("")
+        self._source_status_label.setObjectName("StatusMuted")
+        self._source_status_label.setWordWrap(True)
+        match_layout.addWidget(self._source_status_label)
         self._match_list = MatchList()
         self._match_list.match_selected.connect(self._on_match_selected)
         match_layout.addWidget(self._match_list)
+        self._set_source_status({}, {})
         splitter.addWidget(match_group)
 
         # Track comparison
@@ -153,6 +159,9 @@ class AutoTagPanel(QWidget):
     def set_cache_db_path(self, path: str) -> None:
         self._cache_db_path = path
 
+    def set_discogs_token(self, token: str) -> None:
+        self._discogs_token = token.strip()
+
     def load_files(self, paths: list[Path]) -> None:
         """Load files for auto-tagging."""
         self._files = list(paths)
@@ -164,6 +173,7 @@ class AutoTagPanel(QWidget):
         self._match_list.match_model.clear()
         self._track_table.setRowCount(0)
         self._apply_btn.setEnabled(False)
+        self._set_source_status({}, {})
 
         # Pre-fill hints from first file's tags
         if self._files:
@@ -208,6 +218,7 @@ class AutoTagPanel(QWidget):
 
         self._search_in_progress = True
         self._refresh_search_controls()
+        self._source_status_label.setText("Searching MusicBrainz and Discogs...")
         self._progress.start("Searching...")
 
         worker = AutoTagWorker(
@@ -216,6 +227,7 @@ class AutoTagPanel(QWidget):
             album_hint=album_hint,
             title_hint=title_hint,
             mode=mode,
+            discogs_token=self._discogs_token,
         )
         thread = QThread()
         worker.moveToThread(thread)
@@ -234,13 +246,37 @@ class AutoTagPanel(QWidget):
         self._search_thread = thread
         thread.start()
 
-    def _on_search_done(self, candidates: list) -> None:
+    def _on_search_done(self, payload: object) -> None:
+        if isinstance(payload, dict):
+            candidates_obj = payload.get("candidates", [])
+            source_errors_obj = payload.get("source_errors", {})
+            source_counts_obj = payload.get("source_counts", {})
+            candidates = (
+                candidates_obj if isinstance(candidates_obj, list) else []
+            )
+            source_errors = (
+                source_errors_obj if isinstance(source_errors_obj, dict) else {}
+            )
+            source_counts = (
+                source_counts_obj if isinstance(source_counts_obj, dict) else {}
+            )
+        else:
+            candidates = payload if isinstance(payload, list) else []
+            source_errors = {}
+            source_counts = {}
+
         self._candidates = candidates
         self._match_list.match_model.set_candidates(candidates)
         self._search_in_progress = False
         self._refresh_search_controls()
+        self._set_source_status(source_counts, source_errors, candidates)
         count = len(candidates)
-        self._progress.finish(f"Found {count} candidate(s)")
+        if source_errors:
+            self._progress.finish(
+                f"Found {count} candidate(s) ({self._format_source_errors(source_errors)})"
+            )
+        else:
+            self._progress.finish(f"Found {count} candidate(s)")
 
     def _on_search_progress(self, current: int, total: int, message: str) -> None:
         self._progress.update_progress(current, total, message)
@@ -248,6 +284,7 @@ class AutoTagPanel(QWidget):
     def _on_search_error(self, msg: str) -> None:
         self._search_in_progress = False
         self._refresh_search_controls()
+        self._source_status_label.setText("MusicBrainz: unavailable | Discogs: unavailable")
         self._progress.finish(f"Error: {msg}")
         QMessageBox.critical(self, "Search Error", msg)
 
@@ -259,6 +296,42 @@ class AutoTagPanel(QWidget):
         has_loaded_files = bool(self._files)
         self._search_btn.setEnabled(has_loaded_files)
         self._search_single_btn.setEnabled(len(self._files) == 1)
+
+    @staticmethod
+    def _format_source_errors(source_errors: dict[str, str]) -> str:
+        parts: list[str] = []
+        for source, message in source_errors.items():
+            normalized = " ".join(str(message).split())
+            if len(normalized) > 90:
+                normalized = normalized[:87] + "..."
+            parts.append(f"{source} unavailable: {normalized}")
+        return "; ".join(parts)
+
+    def _set_source_status(
+        self,
+        source_counts: dict[str, object],
+        source_errors: dict[str, str],
+        candidates: list[MatchCandidate] | None = None,
+    ) -> None:
+        source_names = ("MusicBrainz", "Discogs")
+        counts: dict[str, int] = {name: 0 for name in source_names}
+        for name in source_names:
+            raw = source_counts.get(name, 0)
+            try:
+                counts[name] = max(0, int(raw))
+            except (TypeError, ValueError):
+                counts[name] = 0
+        if not source_counts and candidates:
+            for candidate in candidates:
+                if candidate.source in counts:
+                    counts[candidate.source] += 1
+        parts: list[str] = []
+        for name in source_names:
+            part = f"{name}: {counts[name]}"
+            if name in source_errors:
+                part += " (failed)"
+            parts.append(part)
+        self._source_status_label.setText(" | ".join(parts))
 
     def _on_match_selected(self, row: int) -> None:
         candidate = self._match_list.match_model.get_candidate(row)
@@ -293,6 +366,7 @@ class AutoTagPanel(QWidget):
             self._files,
             candidate,
             cache_db_path=self._cache_db_path,
+            discogs_token=self._discogs_token,
         )
         self._apply_thread = QThread()
         self._apply_worker.moveToThread(self._apply_thread)
