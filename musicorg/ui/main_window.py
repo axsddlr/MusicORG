@@ -58,7 +58,6 @@ class MainWindow(QMainWindow):
 
         self._sidebar = SidebarNav()
         self._sidebar.page_changed.connect(self._on_nav_changed)
-        self._sidebar.settings_clicked.connect(self._open_settings)
         content_row.addWidget(self._sidebar)
 
         self._stack = QStackedWidget()

@@ -48,7 +48,6 @@ class SidebarNav(QFrame):
     """Left sidebar with branding, navigation items, and settings."""
 
     page_changed = Signal(int)
-    settings_clicked = Signal()
 
     _NAV_ITEMS = [
         ("\U0001F4C1", "Source"),
@@ -89,14 +88,6 @@ class SidebarNav(QFrame):
             layout.addWidget(item)
 
         layout.addStretch(1)
-
-        # Settings at bottom
-        self._settings_item = NavItem("\u2699", "Settings")
-        self._settings_item.clicked.connect(self.settings_clicked.emit)
-        layout.addWidget(self._settings_item)
-
-        # Bottom padding
-        layout.addSpacing(8)
 
         # Select first item by default
         if self._nav_items:

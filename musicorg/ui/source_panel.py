@@ -49,6 +49,7 @@ class SourcePanel(QWidget):
         self._auto_scan_timer.setSingleShot(True)
         self._auto_scan_timer.setInterval(400)
         self._auto_scan_timer.timeout.connect(self._trigger_auto_scan)
+        self._previous_scan_paths: set[Path] = set()
 
         self._selection_manager = SelectionManager(self)
         self._selection_manager.selection_changed.connect(self._on_selection_changed)
@@ -281,10 +282,10 @@ class SourcePanel(QWidget):
         self._tag_thread.start()
 
     def _on_scan_progress(self, current: int, total: int, message: str) -> None:
-        self._progress.update_progress(current, total, f"Found: {message}")
+        self._progress.update_progress(current, total, f"Scanning... {current} files found")
 
     def _on_tag_read_progress(self, current: int, total: int, message: str) -> None:
-        self._progress.update_progress(current, total, f"Reading: {message}")
+        self._progress.update_progress(current, total, f"Importing files {current}/{total}")
 
     def _on_tags_read(self, payload: object) -> None:
         results = payload
@@ -321,9 +322,19 @@ class SourcePanel(QWidget):
         self._strip_redundant_artwork()
         self._populate_artist_list()
 
-        summary = (
-            f"Found {len(rows)} files ({cache_hits} cached, {cache_misses} read)"
-        )
+        current_paths = {row.path for row in rows}
+        if self._previous_scan_paths:
+            new_count = len(current_paths - self._previous_scan_paths)
+            if new_count > 0:
+                new_label = f"{new_count} new since last scan"
+            else:
+                new_label = "no new files"
+            summary = f"Found {len(rows)} files ({new_label})"
+        else:
+            summary = (
+                f"Found {len(rows)} files ({cache_hits} cached, {cache_misses} read)"
+            )
+        self._previous_scan_paths = current_paths
         if failures:
             self._progress.finish(f"{summary}, {len(failures)} tag read errors")
             preview = "\n".join(
