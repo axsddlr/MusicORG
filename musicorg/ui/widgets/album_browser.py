@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QScrollArea, QVBoxLayout, QWidget
 
 from musicorg.ui.models.file_table_model import FileTableRow
@@ -12,6 +12,8 @@ from musicorg.ui.widgets.selection_manager import SelectionManager
 
 class AlbumBrowser(QScrollArea):
     """Scrollable container holding AlbumCard widgets."""
+
+    album_artwork_changed = Signal(bytes)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -36,6 +38,7 @@ class AlbumBrowser(QScrollArea):
         for album_name in sorted(albums):
             rows = albums[album_name]
             card = AlbumCard(album_name, rows, selection_manager)
+            card.album_clicked.connect(self.album_artwork_changed.emit)
             # Insert before the stretch
             self._layout.insertWidget(self._layout.count() - 1, card)
 

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QVBoxLayout,
+    QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
+    QLineEdit, QSlider, QVBoxLayout,
 )
 
 from musicorg.ui.widgets.dir_picker import DirPicker
@@ -42,6 +44,21 @@ class SettingsDialog(QDialog):
         form.addRow("Path Format:", self._path_format_edit)
         form.addRow("Beets DB Path:", self._beets_db_edit)
 
+        # Backdrop opacity slider
+        slider_layout = QHBoxLayout()
+        self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self._opacity_slider.setRange(0, 30)
+        self._opacity_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self._opacity_slider.setTickInterval(5)
+        self._opacity_label = QLabel("7%")
+        self._opacity_label.setMinimumWidth(35)
+        self._opacity_slider.valueChanged.connect(
+            lambda v: self._opacity_label.setText(f"{v}%")
+        )
+        slider_layout.addWidget(self._opacity_slider)
+        slider_layout.addWidget(self._opacity_label)
+        form.addRow("Artwork Background Opacity:", slider_layout)
+
         layout.addLayout(form)
 
         buttons = QDialogButtonBox(
@@ -57,6 +74,8 @@ class SettingsDialog(QDialog):
         self._discogs_token_edit.setText(self._settings.discogs_token)
         self._path_format_edit.setText(self._settings.path_format)
         self._beets_db_edit.setText(self._settings.beets_db_path)
+        slider_val = int(self._settings.backdrop_opacity * 100)
+        self._opacity_slider.setValue(slider_val)
 
     def _save(self) -> None:
         self._settings.source_dir = self._source_picker.path()
@@ -64,4 +83,5 @@ class SettingsDialog(QDialog):
         self._settings.discogs_token = self._discogs_token_edit.text().strip()
         self._settings.path_format = self._path_format_edit.text().strip()
         self._settings.beets_db_path = self._beets_db_edit.text().strip()
+        self._settings.backdrop_opacity = self._opacity_slider.value() / 100.0
         self.accept()

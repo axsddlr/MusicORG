@@ -74,9 +74,9 @@ class DuplicatesPanel(QWidget):
 
         # Results tree
         self._tree = QTreeWidget()
-        self._tree.setColumnCount(7)
+        self._tree.setColumnCount(8)
         self._tree.setHeaderLabels(
-            ["Status", "Title", "Artist", "Album", "Format", "Size", "Path"]
+            ["Status", "Title", "Artist", "Album", "Format", "Bitrate", "Size", "Path"]
         )
         tree_header = self._tree.header()
         tree_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
@@ -85,7 +85,8 @@ class DuplicatesPanel(QWidget):
         tree_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         tree_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         tree_header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
-        tree_header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
+        tree_header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
+        tree_header.setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
         self._tree.setAlternatingRowColors(True)
         self._tree.setRootIsDecorated(True)
         layout.addWidget(self._tree, 1)
@@ -203,8 +204,9 @@ class DuplicatesPanel(QWidget):
                 child.setText(2, df.tags.artist)
                 child.setText(3, df.tags.album)
                 child.setText(4, df.extension.upper().lstrip("."))
-                child.setText(5, _fmt_size(df.size))
-                child.setText(6, str(df.path))
+                child.setText(5, f"{df.bitrate // 1000} kbps" if df.bitrate else "")
+                child.setText(6, _fmt_size(df.size))
+                child.setText(7, str(df.path))
 
                 for col in range(self._tree.columnCount()):
                     child.setForeground(col, color)

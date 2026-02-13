@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
-    QHBoxLayout, QMainWindow, QStackedWidget, QVBoxLayout, QWidget,
+    QGridLayout, QHBoxLayout, QMainWindow, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from musicorg.ui.autotag_panel import AutoTagPanel
@@ -17,6 +17,7 @@ from musicorg.ui.settings_dialog import SettingsDialog
 from musicorg.ui.source_panel import SourcePanel
 from musicorg.ui.sync_panel import SyncPanel
 from musicorg.ui.tag_editor_panel import TagEditorPanel
+from musicorg.ui.widgets.artwork_backdrop import ArtworkBackdrop
 from musicorg.ui.widgets.sidebar import SidebarNav
 from musicorg.ui.widgets.status_strip import StatusStrip
 
@@ -77,7 +78,16 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self._autotag_panel)      # index 2
         self._stack.addWidget(self._sync_panel)         # index 3
         self._stack.addWidget(self._duplicates_panel)   # index 4
-        content_row.addWidget(self._stack, 1)
+        self._content_container = QWidget()
+        content_grid = QGridLayout(self._content_container)
+        content_grid.setContentsMargins(0, 0, 0, 0)
+        content_grid.setSpacing(0)
+        content_grid.addWidget(self._stack, 0, 0)
+        self._backdrop = ArtworkBackdrop()
+        self._backdrop.set_opacity(self._settings.backdrop_opacity)
+        content_grid.addWidget(self._backdrop, 0, 0)
+        self._backdrop.raise_()
+        content_row.addWidget(self._content_container, 1)
 
         outer.addLayout(content_row, 1)
 
@@ -96,6 +106,10 @@ class MainWindow(QMainWindow):
 
     def _on_nav_changed(self, index: int) -> None:
         self._stack.setCurrentIndex(index)
+        if index == 0:
+            self._source_panel.emit_active_artist_artwork()
+        else:
+            self._backdrop.clear()
 
     def _setup_menu(self) -> None:
         menubar = self.menuBar()
@@ -126,6 +140,7 @@ class MainWindow(QMainWindow):
         # Source → Auto-Tag: send selected files
         self._source_panel.connect_send_to_autotag(self._send_to_autotag)
         self._source_panel.files_selected.connect(self._autotag_panel.load_files)
+        self._source_panel.album_artwork_changed.connect(self._backdrop.set_artwork)
         # Auto-Tag applied → refresh notice
         self._autotag_panel.tags_applied.connect(
             lambda: self._status_strip.show_message("Tags applied — re-scan to see changes")
@@ -154,6 +169,7 @@ class MainWindow(QMainWindow):
             if self._settings.dest_dir:
                 self._sync_panel.set_dest_dir(self._settings.dest_dir)
             self._sync_panel.set_path_format(self._settings.path_format)
+            self._backdrop.set_opacity(self._settings.backdrop_opacity)
             self._status_strip.show_message("Settings updated")
 
     def _show_about(self) -> None:

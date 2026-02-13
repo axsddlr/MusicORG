@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QFrame,
@@ -114,6 +114,8 @@ class TrackRow(QFrame):
 class AlbumCard(QFrame):
     """Album card: cover art left | metadata + two-column track grid right."""
 
+    album_clicked = Signal(bytes)
+
     def __init__(
         self,
         album_name: str,
@@ -135,6 +137,7 @@ class AlbumCard(QFrame):
         cover_label.setFixedSize(120, 120)
         cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         artwork = self._find_artwork(rows)
+        self._artwork_data: bytes = artwork
         if artwork:
             pixmap = QPixmap()
             if pixmap.loadFromData(artwork):
@@ -208,6 +211,11 @@ class AlbumCard(QFrame):
 
         right.addStretch()
         main_layout.addLayout(right, 1)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and self._artwork_data:
+            self.album_clicked.emit(self._artwork_data)
+        super().mousePressEvent(event)
 
     def cleanup(self) -> None:
         for track_row in self._track_rows:

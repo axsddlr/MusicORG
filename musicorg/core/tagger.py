@@ -26,6 +26,7 @@ class TagData:
     genre: str = ""
     composer: str = ""
     duration: float = 0.0
+    bitrate: int = 0
     artwork_data: bytes | None = None
     artwork_mime: str = ""
 
@@ -41,6 +42,7 @@ class TagData:
             "genre": self.genre,
             "composer": self.composer,
             "duration": self.duration,
+            "bitrate": self.bitrate,
             "artwork_data": self.artwork_data,
             "artwork_mime": self.artwork_mime,
         }
@@ -103,6 +105,7 @@ class TagManager:
             return TagData()
         tags = dict(audio.tags or {})
         duration = getattr(audio.info, "length", 0.0) or 0.0
+        bitrate = getattr(audio.info, "bitrate", 0) or 0
         artwork_data = b""
         artwork_mime = ""
         try:
@@ -126,6 +129,7 @@ class TagManager:
             genre=_first(tags, "genre"),
             composer=_first(tags, "composer"),
             duration=duration,
+            bitrate=bitrate,
             artwork_data=artwork_data,
             artwork_mime=artwork_mime,
         )
@@ -176,6 +180,7 @@ class TagManager:
             return TagData()
         tags = dict(audio.tags or {})
         duration = getattr(audio.info, "length", 0.0) or 0.0
+        bitrate = getattr(audio.info, "bitrate", 0) or 0
         artwork_data = b""
         artwork_mime = ""
         if audio.pictures:
@@ -193,6 +198,7 @@ class TagManager:
             genre=_first(tags, "genre"),
             composer=_first(tags, "composer"),
             duration=duration,
+            bitrate=bitrate,
             artwork_data=artwork_data,
             artwork_mime=artwork_mime,
         )

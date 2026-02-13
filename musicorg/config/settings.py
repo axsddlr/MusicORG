@@ -69,6 +69,16 @@ class AppSettings:
     def beets_db_path(self, value: str) -> None:
         self._qs.setValue("beets/db_path", value)
 
+    # -- backdrop opacity --
+
+    @property
+    def backdrop_opacity(self) -> float:
+        return self._qs.value("ui/backdrop_opacity", 0.07, type=float)
+
+    @backdrop_opacity.setter
+    def backdrop_opacity(self, value: float) -> None:
+        self._qs.setValue("ui/backdrop_opacity", value)
+
     # -- window geometry --
 
     @property

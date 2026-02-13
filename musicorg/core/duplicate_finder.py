@@ -29,6 +29,7 @@ class DuplicateFile:
     tags: TagData
     extension: str
     size: int
+    bitrate: int = 0
     keep: bool = False
 
 
@@ -72,14 +73,16 @@ def find_duplicates(
         if not title:
             continue
 
+        album = normalize_title(tags.album)
         if match_artist:
             artist = normalize_title(tags.artist)
-            key = f"{title} || {artist}"
+            key = f"{title} || {album} || {artist}"
         else:
-            key = title
+            key = f"{title} || {album}"
 
         ext = path.suffix.lower()
-        df = DuplicateFile(path=path, tags=tags, extension=ext, size=size)
+        bitrate = getattr(tags, "bitrate", 0) or 0
+        df = DuplicateFile(path=path, tags=tags, extension=ext, size=size, bitrate=bitrate)
         groups.setdefault(key, []).append(df)
 
     # Filter to groups with 2+ files
@@ -88,9 +91,9 @@ def find_duplicates(
         if len(files) < 2:
             continue
 
-        # Sort: highest format priority first, then largest size first
+        # Sort: highest format priority first, then highest bitrate, then largest size
         files.sort(
-            key=lambda f: (FORMAT_PRIORITY.get(f.extension, 0), f.size),
+            key=lambda f: (FORMAT_PRIORITY.get(f.extension, 0), f.bitrate, f.size),
             reverse=True,
         )
 

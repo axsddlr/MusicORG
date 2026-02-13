@@ -26,6 +26,7 @@ class SourcePanel(QWidget):
     """Panel for browsing source directory and scanning audio files."""
 
     files_selected = Signal(list)  # list[Path]
+    album_artwork_changed = Signal(bytes)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -122,6 +123,7 @@ class SourcePanel(QWidget):
         self._alphabet_bar.letter_clicked.connect(self._on_letter_clicked)
         content_layout.addWidget(self._alphabet_bar)
         self._album_browser = AlbumBrowser()
+        self._album_browser.album_artwork_changed.connect(self.album_artwork_changed.emit)
         content_layout.addWidget(self._album_browser, 1)
 
         browser_splitter.addWidget(artist_pane)
@@ -449,6 +451,7 @@ class SourcePanel(QWidget):
         albums = self._library_index.get(self._active_artist, {})
         self._album_browser.set_albums(albums, self._selection_manager)
         self._album_browser.scroll_to_top()
+        self.emit_active_artist_artwork()
 
         # Update alphabet bar active letter
         if self._active_artist:
@@ -460,6 +463,16 @@ class SourcePanel(QWidget):
         else:
             self._alphabet_bar.set_active_letter("")
         self._update_selection_action_buttons()
+
+    def emit_active_artist_artwork(self) -> None:
+        albums = self._library_index.get(self._active_artist, {})
+        if not albums:
+            return
+        from musicorg.ui.widgets.album_card import AlbumCard
+        first_rows = next(iter(albums.values()))
+        art = AlbumCard._find_artwork(first_rows)
+        if art:
+            self.album_artwork_changed.emit(art)
 
     def _on_letter_clicked(self, letter: str) -> None:
         """Find the first artist starting with the given letter and select it."""
