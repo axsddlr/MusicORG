@@ -59,10 +59,13 @@ class AutoTagPanel(QWidget):
         search_layout.setVerticalSpacing(6)
         self._artist_edit = QLineEdit()
         self._album_edit = QLineEdit()
+        self._title_edit = QLineEdit()
         self._artist_edit.textChanged.connect(self._refresh_search_controls)
         self._album_edit.textChanged.connect(self._refresh_search_controls)
+        self._title_edit.textChanged.connect(self._refresh_search_controls)
         search_layout.addRow("Artist:", self._artist_edit)
         search_layout.addRow("Album:", self._album_edit)
+        search_layout.addRow("Title:", self._title_edit)
 
         search_btn_layout = QHBoxLayout()
         search_btn_layout.setContentsMargins(0, 2, 0, 0)
@@ -170,6 +173,7 @@ class AutoTagPanel(QWidget):
                 tags = tm.read(self._files[0])
                 self._artist_edit.setText(tags.albumartist or tags.artist)
                 self._album_edit.setText(tags.album)
+                self._title_edit.setText(tags.title)
             except Exception as e:
                 self._progress.finish(
                     f"Loaded files, but could not read tag hints: {e}"
@@ -188,6 +192,7 @@ class AutoTagPanel(QWidget):
 
         artist_hint = self._artist_edit.text().strip()
         album_hint = self._album_edit.text().strip()
+        title_hint = self._title_edit.text().strip()
         if mode == "single" and len(self._files) != 1:
             QMessageBox.information(
                 self, "Single Search",
@@ -209,6 +214,7 @@ class AutoTagPanel(QWidget):
             paths=self._files,
             artist_hint=artist_hint,
             album_hint=album_hint,
+            title_hint=title_hint,
             mode=mode,
         )
         thread = QThread()
