@@ -139,6 +139,9 @@ class MainWindow(QMainWindow):
         self._source_panel.connect_send_to_editor(self._send_to_editor)
         # Source → Auto-Tag: send selected files
         self._source_panel.connect_send_to_autotag(self._send_to_autotag)
+        # Context menu → Tag Editor / Auto-Tag
+        self._source_panel.send_to_editor_requested.connect(self._send_to_editor)
+        self._source_panel.send_to_autotag_requested.connect(self._send_to_autotag)
         self._source_panel.files_selected.connect(self._autotag_panel.load_files)
         self._source_panel.album_artwork_changed.connect(self._backdrop.set_artwork)
         # Auto-Tag applied → refresh notice

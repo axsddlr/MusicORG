@@ -27,6 +27,8 @@ class SourcePanel(QWidget):
 
     files_selected = Signal(list)  # list[Path]
     album_artwork_changed = Signal(bytes)
+    send_to_editor_requested = Signal(list)
+    send_to_autotag_requested = Signal(list)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -125,6 +127,8 @@ class SourcePanel(QWidget):
         content_layout.addWidget(self._alphabet_bar)
         self._album_browser = AlbumBrowser()
         self._album_browser.album_artwork_changed.connect(self.album_artwork_changed.emit)
+        self._album_browser.send_to_editor.connect(self.send_to_editor_requested.emit)
+        self._album_browser.send_to_autotag.connect(self.send_to_autotag_requested.emit)
         content_layout.addWidget(self._album_browser, 1)
 
         browser_splitter.addWidget(artist_pane)

@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QVBoxLayout,
     QWidget,
 )
@@ -46,12 +47,14 @@ class TrackRow(QFrame):
         self,
         row: FileTableRow,
         selection_manager: SelectionManager,
+        on_context_action=None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("TrackRow")
         self._path: Path = row.path
         self._selection_manager: SelectionManager | None = selection_manager
+        self._on_context_action = on_context_action
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         layout = QHBoxLayout(self)
@@ -92,6 +95,18 @@ class TrackRow(QFrame):
         self.style().unpolish(self)
         self.style().polish(self)
 
+    def contextMenuEvent(self, event) -> None:
+        menu = QMenu(self)
+        send_to = menu.addMenu("Send to")
+        send_to.addAction("Tag Editor", lambda: self._fire_context("editor"))
+        send_to.addAction("Auto-Tag", lambda: self._fire_context("autotag"))
+        menu.exec(event.globalPos())
+        event.accept()
+
+    def _fire_context(self, action: str) -> None:
+        if self._on_context_action is not None:
+            self._on_context_action(action, [self._path])
+
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton and self._selection_manager is not None:
             self._selection_manager.toggle(self._path)
@@ -115,6 +130,8 @@ class AlbumCard(QFrame):
     """Album card: cover art left | metadata + two-column track grid right."""
 
     album_clicked = Signal(bytes)
+    send_to_editor = Signal(list)
+    send_to_autotag = Signal(list)
 
     def __init__(
         self,
@@ -126,6 +143,7 @@ class AlbumCard(QFrame):
         super().__init__(parent)
         self.setObjectName("AlbumCard")
         self._track_rows: list[TrackRow] = []
+        self._all_paths: list[Path] = [r.path for r in rows]
 
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(10, 10, 10, 10)
@@ -201,7 +219,7 @@ class AlbumCard(QFrame):
             grid.setSpacing(0)
             half = math.ceil(len(disc_rows) / 2)
             for i, row in enumerate(disc_rows):
-                track_widget = TrackRow(row, selection_manager)
+                track_widget = TrackRow(row, selection_manager, self._on_context_action)
                 self._track_rows.append(track_widget)
                 if i < half:
                     grid.addWidget(track_widget, i, 0)
@@ -211,6 +229,20 @@ class AlbumCard(QFrame):
 
         right.addStretch()
         main_layout.addLayout(right, 1)
+
+    def _on_context_action(self, action: str, paths: list[Path]) -> None:
+        if action == "editor":
+            self.send_to_editor.emit(paths)
+        elif action == "autotag":
+            self.send_to_autotag.emit(paths)
+
+    def contextMenuEvent(self, event) -> None:
+        menu = QMenu(self)
+        send_to = menu.addMenu("Send to")
+        send_to.addAction("Tag Editor", lambda: self.send_to_editor.emit(self._all_paths))
+        send_to.addAction("Auto-Tag", lambda: self.send_to_autotag.emit(self._all_paths))
+        menu.exec(event.globalPos())
+        event.accept()
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton and self._artwork_data:

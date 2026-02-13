@@ -14,6 +14,8 @@ class AlbumBrowser(QScrollArea):
     """Scrollable container holding AlbumCard widgets."""
 
     album_artwork_changed = Signal(bytes)
+    send_to_editor = Signal(list)
+    send_to_autotag = Signal(list)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -39,6 +41,8 @@ class AlbumBrowser(QScrollArea):
             rows = albums[album_name]
             card = AlbumCard(album_name, rows, selection_manager)
             card.album_clicked.connect(self.album_artwork_changed.emit)
+            card.send_to_editor.connect(self.send_to_editor.emit)
+            card.send_to_autotag.connect(self.send_to_autotag.emit)
             # Insert before the stretch
             self._layout.insertWidget(self._layout.count() - 1, card)
 
