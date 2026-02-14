@@ -27,6 +27,8 @@ from musicorg.core.tagger import TagManager
 from musicorg.ui.widgets.match_list import MatchList
 from musicorg.ui.widgets.progress_bar import ProgressIndicator
 from musicorg.workers.artwork_worker import (
+    ArtworkApplyResult,
+    ArtworkApplyWorker,
     ArtworkPreviewWorker,
     ArtworkSearchWorker,
     PreviewResult,
@@ -52,8 +54,12 @@ class ArtworkDownloaderPanel(QDialog):
         self._search_worker: ArtworkSearchWorker | None = None
         self._search_thread: QThread | None = None
         self._search_in_progress = False
+        self._apply_worker: ArtworkApplyWorker | None = None
+        self._apply_thread: QThread | None = None
+        self._apply_in_progress = False
         self._preview_worker: ArtworkPreviewWorker | None = None
         self._preview_thread: QThread | None = None
+        self._preview_in_progress = False
 
         self._setup_ui()
 
@@ -138,7 +144,7 @@ class ArtworkDownloaderPanel(QDialog):
         self._only_missing_chk = QCheckBox("Only fill missing artwork")
         self._apply_btn = QPushButton("Apply Artwork")
         self._apply_btn.setProperty("role", "accent")
-        self._apply_btn.setToolTip("Apply flow is planned for Phase 3.")
+        self._apply_btn.setToolTip("Write the current preview artwork to loaded files.")
         self._apply_btn.clicked.connect(self._apply_artwork)
         apply_layout.addWidget(self._only_missing_chk)
         apply_layout.addStretch()
@@ -156,6 +162,13 @@ class ArtworkDownloaderPanel(QDialog):
         self._discogs_token = token.strip()
 
     def load_files(self, paths: list[Path]) -> None:
+        if self._apply_in_progress:
+            QMessageBox.information(
+                self,
+                "Artwork Apply In Progress",
+                "Wait for the current artwork apply job to finish.",
+            )
+            return
         self._cancel_preview()
         self._files = list(paths)
         count = len(self._files)
@@ -186,7 +199,7 @@ class ArtworkDownloaderPanel(QDialog):
         self._title_edit.setText(tags.title)
 
     def _refresh_controls(self) -> None:
-        if self._search_in_progress:
+        if self._search_in_progress or self._apply_in_progress:
             self._search_album_btn.setEnabled(False)
             self._search_single_btn.setEnabled(False)
             self._only_missing_chk.setEnabled(False)
@@ -196,8 +209,8 @@ class ArtworkDownloaderPanel(QDialog):
         self._search_album_btn.setEnabled(has_files)
         self._search_single_btn.setEnabled(len(self._files) == 1)
         self._only_missing_chk.setEnabled(has_files)
-        # Apply remains disabled until Phase 3.
-        self._apply_btn.setEnabled(False)
+        has_preview = bool(self._selected_artwork_data)
+        self._apply_btn.setEnabled(has_files and has_preview and not self._preview_in_progress)
 
     def _start_search_album(self) -> None:
         self._start_search("album")
@@ -224,6 +237,7 @@ class ArtworkDownloaderPanel(QDialog):
             return
 
         self._search_in_progress = True
+        self._cancel_preview()
         self._refresh_controls()
         self._match_list.match_model.clear()
         self._set_source_status({}, {})
@@ -297,6 +311,8 @@ class ArtworkDownloaderPanel(QDialog):
     def _start_preview(self, candidate: MatchCandidate) -> None:
         self._cancel_preview()
         self._preview_request_id += 1
+        self._preview_in_progress = True
+        self._refresh_controls()
         request_id = self._preview_request_id
         self._clear_preview("Downloading artwork preview...")
         self._preview_title_label.setText(
@@ -332,6 +348,7 @@ class ArtworkDownloaderPanel(QDialog):
 
     def _on_preview_done(self, payload: object) -> None:
         preview_result = self._coerce_preview_result(payload)
+        self._preview_in_progress = False
         if preview_result is None:
             self._clear_preview("No preview data available")
             self._progress.finish("No artwork preview available")
@@ -360,6 +377,7 @@ class ArtworkDownloaderPanel(QDialog):
         self._selected_artwork_mime = mime
         self._preview_source_pixmap = pixmap
         self._render_preview_pixmap()
+        self._refresh_controls()
 
         size_kb = max(1, len(self._selected_artwork_data) // 1024)
         mime_label = mime if mime else "image/*"
@@ -367,8 +385,43 @@ class ArtworkDownloaderPanel(QDialog):
         self._progress.finish("Artwork preview ready")
 
     def _on_preview_error(self, error_message: str) -> None:
+        self._preview_in_progress = False
+        self._refresh_controls()
         self._clear_preview("Preview download failed")
         self._progress.finish(f"Preview error: {error_message}")
+
+    @staticmethod
+    def _coerce_apply_result(payload: object) -> ArtworkApplyResult:
+        if not isinstance(payload, dict):
+            return {"total": 0, "updated": 0, "skipped": 0, "failed": []}
+        total = 0
+        updated = 0
+        skipped = 0
+        try:
+            total = max(0, int(payload.get("total", 0)))
+        except (TypeError, ValueError):
+            total = 0
+        try:
+            updated = max(0, int(payload.get("updated", 0)))
+        except (TypeError, ValueError):
+            updated = 0
+        try:
+            skipped = max(0, int(payload.get("skipped", 0)))
+        except (TypeError, ValueError):
+            skipped = 0
+        failed: list[tuple[Path, str]] = []
+        raw_failed = payload.get("failed", [])
+        if isinstance(raw_failed, list):
+            for item in raw_failed:
+                if not isinstance(item, (list, tuple)) or len(item) != 2:
+                    continue
+                failed.append((Path(item[0]), str(item[1])))
+        return {
+            "total": total,
+            "updated": updated,
+            "skipped": skipped,
+            "failed": failed,
+        }
 
     @staticmethod
     def _coerce_search_payload(
@@ -468,13 +521,82 @@ class ArtworkDownloaderPanel(QDialog):
         self._preview_image_label.setPixmap(QPixmap())
         self._preview_image_label.setText("No preview")
         self._preview_meta_label.setText(message)
+        self._refresh_controls()
 
     def _apply_artwork(self) -> None:
-        QMessageBox.information(
-            self,
-            "Artwork Downloader",
-            "Artwork apply flow will be added in Phase 3.",
+        if self._apply_in_progress:
+            return
+        if not self._files:
+            QMessageBox.information(self, "Artwork Downloader", "Load files before applying artwork.")
+            return
+        if not self._selected_artwork_data:
+            QMessageBox.information(
+                self,
+                "Artwork Downloader",
+                "Download a preview image before applying artwork.",
+            )
+            return
+
+        self._apply_in_progress = True
+        self._refresh_controls()
+        self._progress.start("Applying artwork...")
+
+        apply_worker = ArtworkApplyWorker(
+            paths=self._files,
+            artwork_data=self._selected_artwork_data,
+            artwork_mime=self._selected_artwork_mime,
+            only_missing=self._only_missing_chk.isChecked(),
+            cache_db_path=self._cache_db_path,
         )
+        apply_thread = QThread()
+        apply_worker.moveToThread(apply_thread)
+        apply_thread.started.connect(apply_worker.run)
+        apply_worker.progress.connect(
+            self._on_apply_progress,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        apply_worker.finished.connect(self._on_apply_done)
+        apply_worker.error.connect(self._on_apply_error)
+        apply_worker.finished.connect(apply_thread.quit)
+        apply_worker.error.connect(apply_thread.quit)
+        apply_thread.finished.connect(
+            partial(self._cleanup_apply, apply_worker, apply_thread)
+        )
+        self._apply_worker = apply_worker
+        self._apply_thread = apply_thread
+        apply_thread.start()
+
+    def _on_apply_progress(self, current: int, total: int, message: str) -> None:
+        self._progress.update_progress(current, total, f"Applying: {message}")
+
+    def _on_apply_done(self, payload: object) -> None:
+        self._apply_in_progress = False
+        self._refresh_controls()
+        result = self._coerce_apply_result(payload)
+        updated = result["updated"]
+        skipped = result["skipped"]
+        failed = result["failed"]
+        summary = f"Artwork updated on {updated} file(s)"
+        if skipped:
+            summary += f", skipped {skipped}"
+        if failed:
+            summary += f", failed {len(failed)}"
+        self._progress.finish(summary)
+        if failed:
+            preview = "\n".join(f"- {path.name}: {error}" for path, error in failed[:8])
+            if len(failed) > 8:
+                preview += f"\n... and {len(failed) - 8} more"
+            QMessageBox.warning(
+                self,
+                "Artwork Apply Warnings",
+                f"Some files failed while applying artwork:\n{preview}",
+            )
+
+    def _on_apply_error(self, error_message: str) -> None:
+        self._apply_in_progress = False
+        self._refresh_controls()
+        self._progress.finish(f"Artwork apply error: {error_message}")
+        QMessageBox.critical(self, "Artwork Apply Error", error_message)
 
     def _render_preview_pixmap(self) -> None:
         if self._preview_source_pixmap.isNull():
@@ -501,6 +623,8 @@ class ArtworkDownloaderPanel(QDialog):
         if self._preview_thread and self._preview_thread.isRunning():
             self._preview_thread.quit()
             self._preview_thread.wait()
+        self._preview_in_progress = False
+        self._refresh_controls()
 
     def _cleanup_search(
         self,
@@ -566,19 +690,58 @@ class ArtworkDownloaderPanel(QDialog):
         if self._preview_thread is preview_thread:
             self._preview_thread = None
 
+    def _cleanup_apply(
+        self,
+        apply_worker: ArtworkApplyWorker,
+        apply_thread: QThread,
+    ) -> None:
+        try:
+            apply_worker.progress.disconnect(self._on_apply_progress)
+        except (RuntimeError, TypeError):
+            pass
+        try:
+            apply_worker.finished.disconnect(self._on_apply_done)
+        except (RuntimeError, TypeError):
+            pass
+        try:
+            apply_worker.error.disconnect(self._on_apply_error)
+        except (RuntimeError, TypeError):
+            pass
+        try:
+            apply_worker.finished.disconnect(apply_thread.quit)
+        except (RuntimeError, TypeError):
+            pass
+        try:
+            apply_worker.error.disconnect(apply_thread.quit)
+        except (RuntimeError, TypeError):
+            pass
+        apply_worker.deleteLater()
+        apply_thread.deleteLater()
+        if self._apply_worker is apply_worker:
+            self._apply_worker = None
+        if self._apply_thread is apply_thread:
+            self._apply_thread = None
+
     def shutdown(self, timeout_ms: int = 3000) -> None:
         _ = timeout_ms
         if self._search_worker:
             self._search_worker.cancel()
+        if self._apply_worker:
+            self._apply_worker.cancel()
         if self._preview_worker:
             self._preview_worker.cancel()
         if self._search_thread and self._search_thread.isRunning():
             self._search_thread.quit()
             self._search_thread.wait()
+        if self._apply_thread and self._apply_thread.isRunning():
+            self._apply_thread.quit()
+            self._apply_thread.wait()
         if self._preview_thread and self._preview_thread.isRunning():
             self._preview_thread.quit()
             self._preview_thread.wait()
         if self._search_worker and self._search_thread:
             self._cleanup_search(self._search_worker, self._search_thread)
+        if self._apply_worker and self._apply_thread:
+            self._cleanup_apply(self._apply_worker, self._apply_thread)
         if self._preview_worker and self._preview_thread:
             self._cleanup_preview(self._preview_worker, self._preview_thread)

@@ -18,6 +18,9 @@ class NavItem(QFrame):
         self.setObjectName("NavItem")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setProperty("selected", False)
+        self.setProperty("focused", False)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName(label)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(14, 8, 14, 8)
@@ -38,6 +41,25 @@ class NavItem(QFrame):
             self.clicked.emit()
         super().mousePressEvent(event)
 
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self.clicked.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def focusInEvent(self, event) -> None:
+        self.setProperty("focused", True)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        super().focusInEvent(event)
+
+    def focusOutEvent(self, event) -> None:
+        self.setProperty("focused", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        super().focusOutEvent(event)
+
     def set_selected(self, selected: bool) -> None:
         self.setProperty("selected", selected)
         self.style().unpolish(self)
@@ -50,15 +72,16 @@ class SidebarNav(QFrame):
     page_changed = Signal(int)
 
     _NAV_ITEMS = [
-        ("\U0001F4C1", "Source"),
-        ("\u21C4", "Sync"),
-        ("\U0001F50D", "Duplicates"),
+        ("\uE8B7", "Source"),
+        ("\uE895", "Sync"),
+        ("\uE8C8", "Duplicates"),
     ]
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("Sidebar")
-        self.setFixedWidth(200)
+        self.setMinimumWidth(184)
+        self.setMaximumWidth(236)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

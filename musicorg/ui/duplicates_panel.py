@@ -76,7 +76,7 @@ class DuplicatesPanel(QWidget):
         self._tree = QTreeWidget()
         self._tree.setColumnCount(8)
         self._tree.setHeaderLabels(
-            ["Status", "Title", "Artist", "Album", "Format", "Bitrate", "Size", "Path"]
+            ["Action", "Title", "Artist", "Album", "Format", "Bitrate", "Size", "Path"]
         )
         tree_header = self._tree.header()
         tree_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
@@ -193,10 +193,11 @@ class DuplicatesPanel(QWidget):
             for df in group.files:
                 child = QTreeWidgetItem(group_item)
                 if df.keep:
-                    child.setText(0, "KEEP")
+                    child.setText(0, "KEEP \u2713")
                     child.setFlags(child.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
                     color = COLOR_KEEP
                 else:
+                    child.setText(0, "DELETE")
                     child.setCheckState(0, Qt.CheckState.Checked)
                     color = COLOR_DELETE
 

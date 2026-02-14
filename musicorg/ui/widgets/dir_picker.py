@@ -16,7 +16,8 @@ class DirPicker(QWidget):
         self._line_edit = QLineEdit()
         self._line_edit.setPlaceholderText("Select a directory...")
         self._browse_btn = QPushButton(label)
-        self._browse_btn.setFixedWidth(100)
+        self._browse_btn.setMinimumWidth(92)
+        self._browse_btn.setMaximumWidth(132)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

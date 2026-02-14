@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMenu,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -53,9 +54,13 @@ class TrackRow(QFrame):
         super().__init__(parent)
         self.setObjectName("TrackRow")
         self._path: Path = row.path
+        self._title_text = row.tags.title or row.filename
         self._selection_manager: SelectionManager | None = selection_manager
         self._on_context_action = on_context_action
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setProperty("focused", "false")
+        self.setAccessibleName(f"Track {self._title_text}")
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(6, 3, 6, 3)
@@ -69,7 +74,7 @@ class TrackRow(QFrame):
         layout.addWidget(track_num)
 
         # Title
-        title = QLabel(row.tags.title or row.filename)
+        title = QLabel(self._title_text)
         title.setObjectName("TrackTitle")
         layout.addWidget(title, 1)
 
@@ -112,6 +117,26 @@ class TrackRow(QFrame):
             self._selection_manager.toggle(self._path)
         super().mousePressEvent(event)
 
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            if self._selection_manager is not None:
+                self._selection_manager.toggle(self._path)
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+    def focusInEvent(self, event) -> None:
+        self.setProperty("focused", "true")
+        self.style().unpolish(self)
+        self.style().polish(self)
+        super().focusInEvent(event)
+
+    def focusOutEvent(self, event) -> None:
+        self.setProperty("focused", "false")
+        self.style().unpolish(self)
+        self.style().polish(self)
+        super().focusOutEvent(event)
+
     def cleanup(self) -> None:
         if self._selection_manager is None:
             return
@@ -145,15 +170,21 @@ class AlbumCard(QFrame):
         self.setObjectName("AlbumCard")
         self._track_rows: list[TrackRow] = []
         self._all_paths: list[Path] = [r.path for r in rows]
+        self._path_set: set[Path] = set(self._all_paths)
+        self._selection_manager: SelectionManager | None = selection_manager
+        self._selection_badge = QLabel("")
+        self._selection_badge.setObjectName("AlbumSelectedBadge")
+        self._selection_badge.setVisible(False)
 
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(12)
+        main_layout.setSpacing(14)
 
         # Cover art (120x120)
         cover_label = QLabel()
         cover_label.setObjectName("AlbumCover")
-        cover_label.setFixedSize(120, 120)
+        cover_label.setMinimumSize(108, 108)
+        cover_label.setMaximumSize(132, 132)
         cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         artwork = self._find_artwork(rows)
         self._artwork_data: bytes = artwork
@@ -190,7 +221,11 @@ class AlbumCard(QFrame):
             year_label = QLabel(str(year))
             year_label.setObjectName("AlbumYear")
             header_layout.addWidget(year_label)
+        header_layout.addWidget(self._selection_badge)
         header_layout.addStretch()
+        self._add_album_action_button(header_layout, "Tag", "editor")
+        self._add_album_action_button(header_layout, "Auto", "autotag")
+        self._add_album_action_button(header_layout, "Art", "artwork")
         right.addLayout(header_layout)
 
         # Meta: track count + total duration
@@ -230,6 +265,8 @@ class AlbumCard(QFrame):
 
         right.addStretch()
         main_layout.addLayout(right, 1)
+        selection_manager.selection_changed.connect(self._on_selection_changed)
+        self._on_selection_changed(selection_manager.selected_paths())
 
     def _on_context_action(self, action: str, paths: list[Path]) -> None:
         if action == "editor":
@@ -238,6 +275,33 @@ class AlbumCard(QFrame):
             self.send_to_autotag.emit(paths)
         elif action == "artwork":
             self.send_to_artwork.emit(paths)
+
+    def _add_album_action_button(
+        self,
+        layout: QHBoxLayout,
+        label: str,
+        action: str,
+    ) -> None:
+        button = QPushButton(label)
+        button.setObjectName("AlbumActionButton")
+        button.setProperty("compact", "true")
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.clicked.connect(
+            lambda _checked=False, selected_action=action: self._on_context_action(
+                selected_action,
+                self._all_paths,
+            )
+        )
+        layout.addWidget(button)
+
+    def _on_selection_changed(self, selected_paths: list[Path]) -> None:
+        selected_count = sum(1 for path in selected_paths if path in self._path_set)
+        if selected_count > 0:
+            self._selection_badge.setText(f"{selected_count} selected")
+            self._selection_badge.setVisible(True)
+        else:
+            self._selection_badge.clear()
+            self._selection_badge.setVisible(False)
 
     def contextMenuEvent(self, event) -> None:
         menu = QMenu(self)
@@ -256,6 +320,12 @@ class AlbumCard(QFrame):
         super().mousePressEvent(event)
 
     def cleanup(self) -> None:
+        if self._selection_manager is not None:
+            try:
+                self._selection_manager.selection_changed.disconnect(self._on_selection_changed)
+            except (RuntimeError, TypeError):
+                pass
+        self._selection_manager = None
         for track_row in self._track_rows:
             track_row.cleanup()
         self._track_rows.clear()

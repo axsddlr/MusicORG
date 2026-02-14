@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict
 
 from musicorg.core.autotagger import AutoTagger, SearchDiagnostics
+from musicorg.core.tag_cache import TagCache
+from musicorg.core.tagger import TagManager
 from musicorg.workers.base_worker import BaseWorker
 
 if TYPE_CHECKING:
@@ -20,6 +23,16 @@ class PreviewResult(TypedDict):
     data: bytes
     mime: str
     message: str
+
+
+ApplyFailure = tuple[Path, str]
+
+
+class ArtworkApplyResult(TypedDict):
+    total: int
+    updated: int
+    skipped: int
+    failed: list[ApplyFailure]
 
 
 class ArtworkSearchWorker(BaseWorker):
@@ -149,4 +162,112 @@ class ArtworkPreviewWorker(BaseWorker):
             "data": data,
             "mime": mime,
             "message": message,
+        }
+
+
+class ArtworkApplyWorker(BaseWorker):
+    """Embeds selected artwork into a set of files."""
+
+    def __init__(
+        self,
+        *,
+        paths: list[str | Path],
+        artwork_data: bytes,
+        artwork_mime: str,
+        only_missing: bool = False,
+        cache_db_path: str = "",
+    ) -> None:
+        super().__init__()
+        self._paths = [Path(path) for path in paths]
+        self._artwork_data = bytes(artwork_data)
+        self._artwork_mime = artwork_mime
+        self._only_missing = only_missing
+        self._cache_db_path = cache_db_path
+
+    def run(self) -> None:
+        self.started.emit()
+        try:
+            total_files = len(self._paths)
+            if total_files == 0:
+                self.finished.emit(self._build_result(total=0, updated=0, skipped=0, failed=[]))
+                return
+
+            tag_writer = TagManager()
+            updated_count = 0
+            skipped_count = 0
+            failed_writes: list[ApplyFailure] = []
+            updated_paths: list[Path] = []
+
+            for index, path in enumerate(self._paths):
+                if self._is_cancelled:
+                    self.cancelled.emit()
+                    return
+                try:
+                    current_tags = tag_writer.read(path)
+                except Exception as exc:
+                    failed_writes.append((path, str(exc) or exc.__class__.__name__))
+                    self.progress.emit(index + 1, total_files, path.name)
+                    continue
+
+                if self._only_missing and current_tags.artwork_data:
+                    skipped_count += 1
+                    self.progress.emit(index + 1, total_files, path.name)
+                    continue
+
+                updated_tags = replace(
+                    current_tags,
+                    artwork_data=self._artwork_data,
+                    artwork_mime=self._artwork_mime or "image/jpeg",
+                )
+                try:
+                    tag_writer.write(path, updated_tags)
+                    updated_count += 1
+                    updated_paths.append(path)
+                except Exception as exc:
+                    failed_writes.append((path, str(exc) or exc.__class__.__name__))
+
+                self.progress.emit(index + 1, total_files, path.name)
+
+            self._invalidate_cache(updated_paths)
+            self.finished.emit(
+                self._build_result(
+                    total=total_files,
+                    updated=updated_count,
+                    skipped=skipped_count,
+                    failed=failed_writes,
+                )
+            )
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+    def _invalidate_cache(self, paths: list[Path]) -> None:
+        if not self._cache_db_path or not paths:
+            return
+        cache: TagCache | None = None
+        try:
+            cache = TagCache(self._cache_db_path)
+            cache.open()
+            cache.invalidate_many(paths)
+        except Exception:
+            pass
+        finally:
+            if cache is not None:
+                try:
+                    cache.close()
+                except Exception:
+                    pass
+
+    @staticmethod
+    def _build_result(
+        *,
+        total: int,
+        updated: int,
+        skipped: int,
+        failed: list[ApplyFailure],
+    ) -> ArtworkApplyResult:
+        return {
+            "total": total,
+            "updated": updated,
+            "skipped": skipped,
+            "failed": failed,
         }

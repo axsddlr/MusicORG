@@ -36,6 +36,7 @@ class SourcePanel(QWidget):
     send_to_editor_requested = Signal(list)
     send_to_autotag_requested = Signal(list)
     send_to_artwork_requested = Signal(list)
+    selection_stats_changed = Signal(int, int)  # total, selected
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -96,6 +97,26 @@ class SourcePanel(QWidget):
         btn_layout.addStretch()
         layout.addLayout(btn_layout)
 
+        action_container = QWidget()
+        action_container.setObjectName("SelectionActionBar")
+        action_layout = QHBoxLayout(action_container)
+        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.setSpacing(8)
+        self._selection_status_label = QLabel("0 selected")
+        self._selection_status_label.setObjectName("StatusDetail")
+        self._open_editor_btn = QPushButton("Tag Editor")
+        self._open_editor_btn.clicked.connect(self._send_selected_to_editor)
+        self._open_autotag_btn = QPushButton("Auto-Tag")
+        self._open_autotag_btn.clicked.connect(self._send_selected_to_autotag)
+        self._open_artwork_btn = QPushButton("Artwork")
+        self._open_artwork_btn.clicked.connect(self._send_selected_to_artwork)
+        action_layout.addWidget(self._selection_status_label)
+        action_layout.addStretch()
+        action_layout.addWidget(self._open_editor_btn)
+        action_layout.addWidget(self._open_autotag_btn)
+        action_layout.addWidget(self._open_artwork_btn)
+        layout.addWidget(action_container)
+
         # Browser layout: artists sidebar + album browser
         browser_splitter = QSplitter(Qt.Orientation.Horizontal)
         browser_splitter.setChildrenCollapsible(False)
@@ -144,12 +165,16 @@ class SourcePanel(QWidget):
         # Progress
         self._progress = ProgressIndicator()
         layout.addWidget(self._progress)
+        self._update_selection_action_buttons()
 
     def set_source_dir(self, path: str) -> None:
         self._dir_picker.set_path(path)
 
     def source_dir(self) -> str:
         return self._dir_picker.path()
+
+    def selected_paths(self) -> list[Path]:
+        return self._selection_manager.selected_paths()
 
     def set_cache_db_path(self, path: str) -> None:
         self._cache_db_path = path
@@ -164,9 +189,16 @@ class SourcePanel(QWidget):
     def _update_selection_action_buttons(self) -> None:
         visible_paths = self._visible_paths()
         has_visible = bool(visible_paths)
-        has_selection = bool(self._selection_manager.selected_paths())
+        selected_paths = self._selection_manager.selected_paths()
+        selected_count = len(selected_paths)
+        has_selection = bool(selected_count)
         self._select_all_btn.setEnabled(has_visible)
         self._deselect_all_btn.setEnabled(has_visible and has_selection)
+        self._open_editor_btn.setEnabled(has_selection)
+        self._open_autotag_btn.setEnabled(has_selection)
+        self._open_artwork_btn.setEnabled(has_selection)
+        self._selection_status_label.setText(f"{selected_count} selected")
+        self._emit_selection_stats()
 
     def _select_all_visible_tracks(self) -> None:
         visible_paths = self._visible_paths()
@@ -175,6 +207,27 @@ class SourcePanel(QWidget):
 
     def _deselect_all_tracks(self) -> None:
         self._selection_manager.clear()
+
+    def _send_selected_to_editor(self) -> None:
+        paths = self._selection_manager.selected_paths()
+        if paths:
+            self.send_to_editor_requested.emit(paths)
+
+    def _send_selected_to_autotag(self) -> None:
+        paths = self._selection_manager.selected_paths()
+        if paths:
+            self.send_to_autotag_requested.emit(paths)
+
+    def _send_selected_to_artwork(self) -> None:
+        paths = self._selection_manager.selected_paths()
+        if paths:
+            self.send_to_artwork_requested.emit(paths)
+
+    def _emit_selection_stats(self) -> None:
+        self.selection_stats_changed.emit(
+            len(self._all_rows),
+            len(self._selection_manager.selected_paths()),
+        )
 
     @staticmethod
     def _normalize_path(path: str) -> str:
@@ -343,6 +396,7 @@ class SourcePanel(QWidget):
         self._scan_btn.setEnabled(True)
         self._scan_in_progress = False
         self._last_scanned_path = self._scan_target_path
+        self._emit_selection_stats()
         self._run_pending_auto_scan()
 
     @staticmethod
@@ -521,6 +575,7 @@ class SourcePanel(QWidget):
     ) -> None:
         self._active_artist = ""
         self._selection_manager.clear()
+        self._emit_selection_stats()
         if current is not None:
             self._active_artist = str(current.data(ROLE_ARTIST_KEY) or "")
 

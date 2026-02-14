@@ -133,6 +133,21 @@ class MainWindow(QMainWindow):
         prefs_action.triggered.connect(self._open_settings)
         settings_menu.addAction(prefs_action)
 
+        # Tools menu
+        tools_menu = menubar.addMenu("&Tools")
+        tag_editor_action = QAction("Open &Tag Editor", self)
+        tag_editor_action.setShortcut("Ctrl+E")
+        tag_editor_action.triggered.connect(self._open_tag_editor_from_selection)
+        tools_menu.addAction(tag_editor_action)
+        autotag_action = QAction("Open &Auto-Tag", self)
+        autotag_action.setShortcut("Ctrl+T")
+        autotag_action.triggered.connect(self._open_autotag_from_selection)
+        tools_menu.addAction(autotag_action)
+        artwork_action = QAction("Open &Artwork Downloader", self)
+        artwork_action.setShortcut("Ctrl+Shift+A")
+        artwork_action.triggered.connect(self._open_artwork_from_selection)
+        tools_menu.addAction(artwork_action)
+
         # Help menu
         help_menu = menubar.addMenu("&Help")
         about_action = QAction("&About", self)
@@ -144,6 +159,7 @@ class MainWindow(QMainWindow):
         self._source_panel.send_to_editor_requested.connect(self._send_to_editor)
         self._source_panel.send_to_autotag_requested.connect(self._send_to_autotag)
         self._source_panel.send_to_artwork_requested.connect(self._send_to_artwork)
+        self._source_panel.selection_stats_changed.connect(self._status_strip.set_file_count)
         self._source_panel.album_artwork_changed.connect(self._backdrop.set_artwork)
         # Auto-Tag applied -> refresh notice
         self._autotag_panel.tags_applied.connect(
@@ -167,6 +183,27 @@ class MainWindow(QMainWindow):
             self._artwork_downloader_panel.load_files(paths)
             self._artwork_downloader_panel.show()
             self._artwork_downloader_panel.raise_()
+
+    def _open_tag_editor_from_selection(self) -> None:
+        selected_paths = self._source_panel.selected_paths()
+        if not selected_paths:
+            self._status_strip.show_message("Select files in Source to open Tag Editor", 2400)
+            return
+        self._send_to_editor(selected_paths)
+
+    def _open_autotag_from_selection(self) -> None:
+        selected_paths = self._source_panel.selected_paths()
+        if not selected_paths:
+            self._status_strip.show_message("Select files in Source to open Auto-Tag", 2400)
+            return
+        self._send_to_autotag(selected_paths)
+
+    def _open_artwork_from_selection(self) -> None:
+        selected_paths = self._source_panel.selected_paths()
+        if not selected_paths:
+            self._status_strip.show_message("Select files in Source to open Artwork", 2400)
+            return
+        self._send_to_artwork(selected_paths)
 
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self._settings, self)

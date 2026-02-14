@@ -16,7 +16,8 @@ class StatusStrip(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("StatusStrip")
-        self.setFixedHeight(32)
+        self.setMinimumHeight(30)
+        self.setMaximumHeight(40)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 0, 12, 0)
@@ -29,9 +30,11 @@ class StatusStrip(QFrame):
         layout.addStretch(1)
 
         self._progress_bar = QProgressBar()
-        self._progress_bar.setFixedWidth(160)
+        self._progress_bar.setMinimumWidth(136)
+        self._progress_bar.setMaximumWidth(220)
         self._progress_bar.setFixedHeight(14)
-        self._progress_bar.setTextVisible(False)
+        self._progress_bar.setTextVisible(True)
+        self._progress_bar.setFormat("%v/%m")
         self._progress_bar.hide()
         layout.addWidget(self._progress_bar)
 
@@ -55,6 +58,7 @@ class StatusStrip(QFrame):
     def show_progress(self, current: int, total: int) -> None:
         self._progress_bar.setMaximum(total)
         self._progress_bar.setValue(current)
+        self._progress_bar.setFormat("%v/%m")
         self._progress_bar.show()
 
     def hide_progress(self) -> None:

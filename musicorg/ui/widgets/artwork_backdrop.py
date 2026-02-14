@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEasingCurve, Property, QPropertyAnimation, Qt
 from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtWidgets import QWidget
 
@@ -15,10 +15,15 @@ class ArtworkBackdrop(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setAutoFillBackground(False)
-        self._opacity: float = 0.07
+        self._target_opacity: float = 0.07
+        self._paint_opacity: float = 0.0
         self._artwork_data: bytes | None = None
         self._source_pixmap = QPixmap()
         self._blurred_pixmap = QPixmap()
+        self._fade = QPropertyAnimation(self, b"paintOpacity", self)
+        self._fade.setDuration(260)
+        self._fade.setEasingCurve(QEasingCurve.Type.InOutCubic)
+        self._fade.finished.connect(self._on_fade_finished)
         self.hide()
 
     def set_artwork(self, data: bytes | None) -> None:
@@ -39,21 +44,27 @@ class ArtworkBackdrop(QWidget):
         self._artwork_data = data
         self._source_pixmap = pixmap
         self._blurred_pixmap = QPixmap()
+        self._fade.stop()
+        self._paint_opacity = 0.0
         self.show()
+        self._animate_to(self._target_opacity)
         self.update()
 
     def set_opacity(self, value: float) -> None:
         """Set the backdrop paint opacity and repaint."""
-        self._opacity = value
+        self._target_opacity = max(0.0, min(0.35, value))
+        if self._source_pixmap.isNull():
+            self._paint_opacity = 0.0
+        else:
+            self._paint_opacity = self._target_opacity
         self.update()
 
     def clear(self) -> None:
         """Clear current artwork and hide the overlay."""
-        self._artwork_data = None
-        self._source_pixmap = QPixmap()
-        self._blurred_pixmap = QPixmap()
-        self.hide()
-        self.update()
+        if self._source_pixmap.isNull():
+            self._clear_immediately()
+            return
+        self._animate_to(0.0)
 
     def paintEvent(self, _event) -> None:
         if self._source_pixmap.isNull() or self.width() <= 0 or self.height() <= 0:
@@ -66,8 +77,26 @@ class ArtworkBackdrop(QWidget):
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-        painter.setOpacity(self._opacity)
+        painter.setOpacity(self._paint_opacity)
         painter.drawPixmap(self.rect(), self._blurred_pixmap)
+
+    def _clear_immediately(self) -> None:
+        self._artwork_data = None
+        self._source_pixmap = QPixmap()
+        self._blurred_pixmap = QPixmap()
+        self._paint_opacity = 0.0
+        self.hide()
+        self.update()
+
+    def _animate_to(self, value: float) -> None:
+        self._fade.stop()
+        self._fade.setStartValue(self._paint_opacity)
+        self._fade.setEndValue(value)
+        self._fade.start()
+
+    def _on_fade_finished(self) -> None:
+        if self._paint_opacity <= 0.001:
+            self._clear_immediately()
 
     def _rebuild_blurred_pixmap(self) -> None:
         if self._source_pixmap.isNull():
@@ -99,3 +128,14 @@ class ArtworkBackdrop(QWidget):
             Qt.AspectRatioMode.IgnoreAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
+
+    def _get_paint_opacity(self) -> float:
+        return self._paint_opacity
+
+    def _set_paint_opacity(self, value: float) -> None:
+        self._paint_opacity = max(0.0, min(1.0, value))
+        if self._paint_opacity > 0.001 and not self.isVisible():
+            self.show()
+        self.update()
+
+    paintOpacity = Property(float, _get_paint_opacity, _set_paint_opacity)

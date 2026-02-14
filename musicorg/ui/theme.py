@@ -2,572 +2,538 @@
 
 from __future__ import annotations
 
-APP_STYLESHEET = """
-QWidget {
-    background-color: #141518;
-    color: #dcdfe4;
-    font-family: "Segoe UI", "Noto Sans", sans-serif;
+# Theme tokens are centralized to keep visual decisions consistent.
+TOKENS = {
+    "canvas": "#0e1015",
+    "surface_0": "#12151c",
+    "surface_1": "#171b24",
+    "surface_2": "#1d2230",
+    "surface_3": "#252c3d",
+    "line_soft": "#2a3143",
+    "line_strong": "#36405a",
+    "text_primary": "#e6ebf5",
+    "text_muted": "#93a0b8",
+    "text_dim": "#6f7b92",
+    "accent": "#d4a44a",
+    "accent_hover": "#e6b962",
+    "accent_press": "#ba8b35",
+    "accent_subtle": "#4e452f",
+    "danger": "#d76868",
+    "success": "#5fb484",
+    "focus_ring": "#8cb6ff",
+}
+
+FONTS = {
+    "body": '"Noto Sans", "Segoe UI Variable Text", "Segoe UI", sans-serif',
+    "display": '"Bahnschrift", "Segoe UI Semibold", "Segoe UI", sans-serif',
+    "icon": '"Segoe Fluent Icons", "Segoe MDL2 Assets", "Segoe UI Symbol", sans-serif',
+}
+
+BASE_STYLES = f"""
+QWidget {{
+    background-color: {TOKENS["surface_0"]};
+    color: {TOKENS["text_primary"]};
+    font-family: {FONTS["body"]};
     font-size: 10pt;
-}
+}}
 
-QMainWindow {
-    background-color: #0c0e12;
-}
+QMainWindow {{
+    background-color: {TOKENS["canvas"]};
+}}
 
-/* ── Menu Bar ── */
+QLabel {{
+    color: {TOKENS["text_primary"]};
+    background-color: transparent;
+}}
 
-QMenuBar {
-    background-color: #0c0e12;
-    color: #c9d0db;
-    border-bottom: 1px solid #222730;
-}
+#StatusMuted {{
+    color: {TOKENS["text_dim"]};
+    font-size: 8pt;
+}}
 
-QMenuBar::item {
+#StatusDetail {{
+    color: {TOKENS["text_muted"]};
+    font-size: 9pt;
+}}
+
+#StatusMessage {{
+    color: {TOKENS["text_muted"]};
+    font-size: 9pt;
+}}
+"""
+
+MENU_STYLES = f"""
+QMenuBar {{
+    background-color: {TOKENS["canvas"]};
+    color: {TOKENS["text_muted"]};
+    border-bottom: 1px solid {TOKENS["line_soft"]};
+}}
+
+QMenuBar::item {{
     padding: 6px 10px;
-    spacing: 4px;
     background: transparent;
-}
+}}
 
-QMenuBar::item:selected {
-    background-color: #252a35;
-    color: #ffffff;
-}
+QMenuBar::item:selected {{
+    background-color: {TOKENS["surface_2"]};
+    color: {TOKENS["text_primary"]};
+}}
 
-QMenu {
-    background-color: #111316;
-    border: 1px solid #222730;
+QMenu {{
+    background-color: {TOKENS["surface_0"]};
+    border: 1px solid {TOKENS["line_soft"]};
     padding: 4px;
-}
+}}
 
-QMenu::item {
+QMenu::item {{
     padding: 6px 22px 6px 10px;
     border-radius: 4px;
-}
+}}
 
-QMenu::item:selected {
-    background-color: #252a35;
-}
+QMenu::item:selected {{
+    background-color: {TOKENS["surface_2"]};
+}}
+"""
 
-/* ── Sidebar ── */
+SIDEBAR_STYLES = f"""
+#Sidebar {{
+    background-color: {TOKENS["surface_0"]};
+    border-right: 1px solid {TOKENS["line_soft"]};
+}}
 
-#Sidebar {
-    background-color: #101216;
-    border-right: 1px solid #222730;
-}
-
-#SidebarBrand {
+#SidebarBrand {{
     background-color: transparent;
-    color: #d4a44a;
-    font-size: 14pt;
+    color: {TOKENS["accent"]};
+    font-family: {FONTS["display"]};
+    font-size: 15pt;
     font-weight: 700;
     letter-spacing: 1px;
-    border-bottom: 1px solid #222730;
-}
+    border-bottom: 1px solid {TOKENS["line_soft"]};
+}}
 
-#SectionHeader {
+#SectionHeader {{
     background-color: transparent;
-    color: #7a8494;
+    color: {TOKENS["text_muted"]};
     font-size: 8pt;
     font-weight: 700;
-    letter-spacing: 1.2px;
+    letter-spacing: 1.1px;
     text-transform: uppercase;
-}
+}}
 
-#NavItem {
+#NavItem {{
     background-color: transparent;
     border: none;
     border-left: 3px solid transparent;
-    color: #7a8494;
-}
+    color: {TOKENS["text_muted"]};
+}}
 
-#NavItem:hover {
-    background-color: #191c21;
-    color: #dcdfe4;
-}
+#NavItem:hover {{
+    background-color: {TOKENS["surface_1"]};
+    color: {TOKENS["text_primary"]};
+}}
 
-#NavItem[selected="true"] {
-    background-color: #191c21;
-    border-left: 3px solid #d4a44a;
-    color: #dcdfe4;
-}
+#NavItem[selected="true"] {{
+    background-color: {TOKENS["surface_1"]};
+    border-left: 3px solid {TOKENS["accent"]};
+    color: {TOKENS["text_primary"]};
+}}
 
-#NavItem #NavIcon {
+#NavItem[focused="true"] {{
+    border-left: 3px solid {TOKENS["focus_ring"]};
+    background-color: {TOKENS["surface_2"]};
+}}
+
+#NavItem #NavIcon {{
     background-color: transparent;
+    font-family: {FONTS["icon"]};
     font-size: 13pt;
-}
+}}
 
-#NavItem #NavLabel {
+#NavItem #NavLabel {{
     background-color: transparent;
-    font-weight: 600;
+    font-family: {FONTS["display"]};
     font-size: 10pt;
-}
+    font-weight: 600;
+}}
+"""
 
-/* ── Status Strip ── */
+FORM_STYLES = f"""
+QLineEdit, QSpinBox, QComboBox {{
+    background-color: {TOKENS["surface_0"]};
+    border: 1px solid {TOKENS["line_soft"]};
+    border-radius: 7px;
+    padding: 5px 8px;
+    selection-background-color: {TOKENS["surface_3"]};
+    color: {TOKENS["text_primary"]};
+}}
 
-#StatusStrip {
-    background-color: #0c0e12;
-    border-top: 1px solid #222730;
-}
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus {{
+    border: 1px solid {TOKENS["focus_ring"]};
+}}
 
-#StatusStrip QLabel {
-    background-color: transparent;
-}
-
-#StatusMessage {
-    color: #7a8494;
-    font-size: 9pt;
-}
-
-#StatusDetail {
-    color: #7a8494;
-    font-size: 9pt;
-}
-
-#StatusMuted {
-    color: #4a5260;
-    font-size: 8pt;
-}
-
-#StatusStrip QProgressBar {
-    border: 1px solid #222730;
-    border-radius: 4px;
-    min-height: 10px;
-    max-height: 10px;
-    background-color: #111316;
-}
-
-#StatusStrip QProgressBar::chunk {
-    background-color: #d4a44a;
-    border-radius: 4px;
-}
-
-/* ── Group Box ── */
-
-QGroupBox {
+QComboBox::drop-down {{
     border: none;
-    border-top: 1px solid #222730;
+    width: 20px;
+}}
+
+QComboBox QAbstractItemView {{
+    background-color: {TOKENS["surface_0"]};
+    border: 1px solid {TOKENS["line_soft"]};
+    selection-background-color: {TOKENS["surface_2"]};
+}}
+
+QCheckBox {{
+    background-color: transparent;
+    spacing: 6px;
+}}
+
+QCheckBox::indicator {{
+    width: 14px;
+    height: 14px;
+    border: 1px solid {TOKENS["line_soft"]};
+    border-radius: 3px;
+    background-color: {TOKENS["surface_0"]};
+}}
+
+QCheckBox::indicator:checked {{
+    background-color: {TOKENS["accent"]};
+    border-color: {TOKENS["accent"]};
+}}
+"""
+
+BUTTON_STYLES = f"""
+QPushButton {{
+    background-color: {TOKENS["surface_1"]};
+    color: {TOKENS["text_primary"]};
+    border: 1px solid {TOKENS["line_soft"]};
+    border-radius: 7px;
+    padding: 5px 11px;
+    min-height: 18px;
+    font-family: {FONTS["display"]};
+    font-weight: 600;
+}}
+
+QPushButton:hover {{
+    background-color: {TOKENS["surface_2"]};
+}}
+
+QPushButton:pressed {{
+    background-color: {TOKENS["surface_0"]};
+}}
+
+QPushButton:focus {{
+    border: 1px solid {TOKENS["focus_ring"]};
+}}
+
+QPushButton:disabled {{
+    background-color: {TOKENS["surface_1"]};
+    color: {TOKENS["text_dim"]};
+    border-color: {TOKENS["line_soft"]};
+}}
+
+QPushButton[compact="true"] {{
+    min-height: 16px;
+    padding: 3px 8px;
+    font-size: 8.5pt;
+    border-radius: 6px;
+}}
+
+QPushButton[role="accent"] {{
+    background-color: {TOKENS["accent"]};
+    color: {TOKENS["canvas"]};
+    border: 1px solid {TOKENS["accent"]};
+}}
+
+QPushButton[role="accent"]:hover {{
+    background-color: {TOKENS["accent_hover"]};
+}}
+
+QPushButton[role="accent"]:pressed {{
+    background-color: {TOKENS["accent_press"]};
+}}
+
+QPushButton[role="accent"]:disabled {{
+    background-color: {TOKENS["accent_subtle"]};
+    color: {TOKENS["text_dim"]};
+    border: 1px solid {TOKENS["accent_subtle"]};
+}}
+"""
+
+STRUCTURE_STYLES = f"""
+QGroupBox {{
+    border: none;
+    border-top: 1px solid {TOKENS["line_soft"]};
     margin-top: 7px;
     padding-top: 7px;
     font-weight: 600;
-    color: #dcdfe4;
+    color: {TOKENS["text_primary"]};
     background-color: transparent;
-}
+}}
 
-QGroupBox::title {
+QGroupBox::title {{
     subcontrol-origin: margin;
     left: 8px;
     padding: 0 4px;
-    color: #d4a44a;
+    color: {TOKENS["accent"]};
     text-transform: uppercase;
     font-size: 9pt;
     letter-spacing: 0.5px;
-}
+}}
 
-/* ── Labels ── */
+QSplitter::handle {{
+    background-color: {TOKENS["line_soft"]};
+    width: 2px;
+    height: 2px;
+}}
 
-QLabel {
-    color: #dcdfe4;
-}
+#SelectionActionBar {{
+    background-color: {TOKENS["surface_1"]};
+    border: 1px solid {TOKENS["line_soft"]};
+    border-radius: 8px;
+    padding: 2px 4px;
+}}
+"""
 
-/* ── Inputs ── */
-
-QLineEdit, QSpinBox {
-    background-color: #111316;
-    border: 1px solid #222730;
-    border-radius: 6px;
-    padding: 5px 8px;
-    selection-background-color: #252a35;
-    color: #dcdfe4;
-}
-
-QLineEdit:focus, QSpinBox:focus {
-    border: 1px solid #d4a44a;
-}
-
-QComboBox {
-    background-color: #111316;
-    border: 1px solid #222730;
-    border-radius: 6px;
-    padding: 5px 8px;
-    color: #dcdfe4;
-}
-
-QComboBox:focus {
-    border: 1px solid #d4a44a;
-}
-
-QComboBox::drop-down {
-    border: none;
-    width: 20px;
-}
-
-QComboBox QAbstractItemView {
-    background-color: #111316;
-    border: 1px solid #222730;
-    selection-background-color: #252a35;
-}
-
-QCheckBox {
-    background-color: transparent;
-    spacing: 6px;
-}
-
-QCheckBox::indicator {
-    width: 14px;
-    height: 14px;
-    border: 1px solid #222730;
-    border-radius: 3px;
-    background-color: #111316;
-}
-
-QCheckBox::indicator:checked {
-    background-color: #d4a44a;
-    border-color: #d4a44a;
-}
-
-/* ── Buttons ── */
-
-QPushButton {
-    background-color: #1e2228;
-    color: #dcdfe4;
-    border: 1px solid #222730;
-    border-radius: 6px;
-    padding: 5px 11px;
-    min-height: 18px;
-    font-weight: 600;
-}
-
-QPushButton:hover {
-    background-color: #252a35;
-}
-
-QPushButton:pressed {
-    background-color: #191c21;
-}
-
-QPushButton:disabled {
-    background-color: #191c21;
-    color: #4a5260;
-    border-color: #222730;
-}
-
-QPushButton[role="accent"] {
-    background-color: #d4a44a;
-    color: #0c0e12;
-    border: 1px solid #d4a44a;
-}
-
-QPushButton[role="accent"]:hover {
-    background-color: #e0b45a;
-}
-
-QPushButton[role="accent"]:pressed {
-    background-color: #c09440;
-}
-
-QPushButton[role="accent"]:disabled {
-    background-color: #5a5040;
-    color: #8a8070;
-    border: 1px solid #5a5040;
-}
-
-/* ── Header View ── */
-
-QHeaderView::section {
-    background-color: #111316;
-    color: #7a8494;
+DATA_VIEW_STYLES = f"""
+QHeaderView::section {{
+    background-color: {TOKENS["surface_0"]};
+    color: {TOKENS["text_muted"]};
     border: 0;
-    border-bottom: 1px solid #222730;
+    border-bottom: 1px solid {TOKENS["line_soft"]};
     padding: 5px 7px;
     font-weight: 600;
     font-size: 9pt;
     text-transform: uppercase;
     letter-spacing: 0.3px;
-}
+}}
 
-/* ── Tables ── */
-
-QTableView, QTableWidget {
-    background-color: #111316;
-    alternate-background-color: #141518;
+QTableView, QTableWidget, QTreeWidget, QListWidget {{
+    background-color: {TOKENS["surface_0"]};
+    alternate-background-color: {TOKENS["surface_1"]};
     border: none;
+    selection-background-color: {TOKENS["surface_2"]};
+    selection-color: {TOKENS["text_primary"]};
     gridline-color: transparent;
-    selection-background-color: #252a35;
-    selection-color: #f8fbff;
-}
+}}
 
-QTableView::item, QTableWidget::item {
+QTableView::item, QTableWidget::item, QTreeWidget::item {{
     padding: 3px 5px;
-}
+}}
 
-/* ── List Widget ── */
-
-QListWidget {
-    background-color: #111316;
-    alternate-background-color: #141518;
-    border: none;
-    border-radius: 0;
-}
-
-QListWidget::item {
+QListWidget::item {{
     padding: 6px 9px;
-    border-bottom: 1px solid #1a1d22;
+    border-bottom: 1px solid {TOKENS["surface_1"]};
     border-left: 3px solid transparent;
-}
+}}
 
-QListWidget::item:selected {
-    background-color: #252a35;
-    color: #f8fbff;
-    border-left: 3px solid #d4a44a;
-}
+QListWidget::item:selected {{
+    background-color: {TOKENS["surface_2"]};
+    border-left: 3px solid {TOKENS["accent"]};
+}}
 
-QListWidget::item:hover:!selected {
-    background-color: #191c21;
-}
+QListWidget::item:hover:!selected, QAbstractItemView::item:hover {{
+    background-color: {TOKENS["surface_1"]};
+}}
+"""
 
-/* ── Item Views (shared) ── */
-
-QAbstractItemView::item:hover {
-    background-color: #191c21;
-}
-
-/* ── Progress Bar ── */
-
-QProgressBar {
-    border: 1px solid #222730;
+PROGRESS_STYLES = f"""
+QProgressBar {{
+    border: 1px solid {TOKENS["line_soft"]};
     border-radius: 6px;
     min-height: 12px;
     max-height: 12px;
     text-align: center;
-    background-color: #111316;
-    color: #dcdfe4;
-}
+    background-color: {TOKENS["surface_0"]};
+    color: {TOKENS["text_primary"]};
+}}
 
-QProgressBar::chunk {
-    background-color: #d4a44a;
+QProgressBar::chunk {{
+    background-color: {TOKENS["accent"]};
     border-radius: 6px;
-}
+}}
 
-/* ── Splitter ── */
+#StatusStrip {{
+    background-color: {TOKENS["canvas"]};
+    border-top: 1px solid {TOKENS["line_soft"]};
+}}
 
-QSplitter::handle {
-    background-color: #222730;
-    width: 2px;
-    height: 2px;
-}
-
-/* ── Scrollbars ── */
-
-QScrollBar:vertical {
-    background: transparent;
-    width: 8px;
-    margin: 2px;
+#StatusStrip QProgressBar {{
+    border: 1px solid {TOKENS["line_soft"]};
     border-radius: 4px;
-}
+    min-height: 10px;
+    max-height: 10px;
+    background-color: {TOKENS["surface_0"]};
+}}
 
-QScrollBar::handle:vertical {
-    background: #2a2f38;
-    min-height: 24px;
+#StatusStrip QProgressBar::chunk {{
+    background-color: {TOKENS["accent"]};
     border-radius: 4px;
-}
+}}
+"""
 
-QScrollBar::handle:vertical:hover {
-    background: #3a4050;
-}
+ALBUM_STYLES = f"""
+#AlbumCard {{
+    background-color: {TOKENS["surface_1"]};
+    border: 1px solid {TOKENS["line_soft"]};
+    border-radius: 10px;
+}}
 
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-    height: 0px;
-}
+#AlbumCard:hover {{
+    border-color: {TOKENS["line_strong"]};
+    background-color: {TOKENS["surface_2"]};
+}}
 
-QScrollBar:horizontal {
-    background: transparent;
-    height: 8px;
-    margin: 2px;
-    border-radius: 4px;
-}
-
-QScrollBar::handle:horizontal {
-    background: #2a2f38;
-    min-width: 24px;
-    border-radius: 4px;
-}
-
-QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
-    width: 0px;
-}
-
-/* ── Form Layout Labels ── */
-
-QFormLayout QLabel {
-    background-color: transparent;
-}
-
-/* ── Album Card ── */
-
-#AlbumCard {
-    background-color: #161920;
-    border: 1px solid #222730;
-    border-radius: 8px;
-}
-
-#AlbumCard:hover {
-    border-color: #2a3040;
-    background-color: #1a1e26;
-}
-
-#AlbumCover {
-    border: 1px solid #222730;
-    border-radius: 4px;
-    background-color: #111316;
-    color: #4a5260;
+#AlbumCover {{
+    border: 1px solid {TOKENS["line_soft"]};
+    border-radius: 6px;
+    background-color: {TOKENS["surface_0"]};
+    color: {TOKENS["text_dim"]};
     font-size: 8pt;
-}
+}}
 
-#AlbumTitle {
-    background-color: transparent;
-    color: #f0f2f5;
+#AlbumTitle {{
+    color: {TOKENS["text_primary"]};
+    font-family: {FONTS["display"]};
     font-size: 12pt;
     font-weight: 700;
-}
+}}
 
-#AlbumYear {
-    background-color: transparent;
-    color: #7a8494;
-    font-size: 10pt;
-}
+#AlbumActionButton {{
+    background-color: {TOKENS["surface_0"]};
+    color: {TOKENS["text_muted"]};
+    border: 1px solid {TOKENS["line_soft"]};
+    min-width: 34px;
+}}
 
-#AlbumMeta {
-    background-color: transparent;
-    color: #7a8494;
-    font-size: 9pt;
-}
+#AlbumActionButton:hover {{
+    background-color: {TOKENS["surface_1"]};
+    color: {TOKENS["text_primary"]};
+}}
 
-#DiscHeader {
-    background-color: transparent;
-    color: #7a8494;
-    font-size: 9pt;
+#AlbumSelectedBadge {{
+    background-color: {TOKENS["accent_subtle"]};
+    color: {TOKENS["accent_hover"]};
+    border: 1px solid {TOKENS["line_soft"]};
+    border-radius: 9px;
+    padding: 1px 8px;
+    font-size: 8pt;
     font-weight: 600;
-    padding: 6px 0 2px 0;
-    border-top: 1px solid #222730;
-    margin-top: 4px;
-}
+}}
 
-/* ── Track Row ── */
+#AlbumYear, #AlbumMeta, #DiscHeader, #TrackDuration {{
+    color: {TOKENS["text_muted"]};
+}}
 
-#TrackRow {
+#TrackNumber {{
+    color: {TOKENS["text_dim"]};
+}}
+
+#TrackTitle {{
+    color: {TOKENS["text_primary"]};
+}}
+
+#TrackRow {{
     background-color: transparent;
     border: none;
     border-left: 3px solid transparent;
-    border-radius: 0;
-    padding: 0;
-}
+}}
 
-#TrackRow:hover {
-    background-color: #1e2228;
-}
+#TrackRow:hover {{
+    background-color: {TOKENS["surface_1"]};
+}}
 
-#TrackRow[selected="true"] {
-    background-color: #1e2530;
-    border-left: 3px solid #d4a44a;
-}
+#TrackRow[focused="true"] {{
+    background-color: {TOKENS["surface_2"]};
+    border-left: 3px solid {TOKENS["focus_ring"]};
+}}
 
-#TrackNumber {
-    background-color: transparent;
-    color: #4a5260;
-    font-size: 9pt;
-}
+#TrackRow[selected="true"] {{
+    background-color: {TOKENS["surface_2"]};
+    border-left: 3px solid {TOKENS["accent"]};
+}}
 
-#TrackTitle {
-    background-color: transparent;
-    color: #dcdfe4;
-    font-size: 9pt;
-}
-
-#TrackDuration {
-    background-color: transparent;
-    color: #7a8494;
-    font-size: 9pt;
-}
-
-/* ── Alphabet Bar ── */
-
-#AlphabetBar {
-    background-color: transparent;
-}
-
-#AlphabetBar QPushButton {
+#AlphabetBar QPushButton {{
     background-color: transparent;
     border: none;
     border-radius: 3px;
-    color: #7a8494;
+    color: {TOKENS["text_muted"]};
     font-size: 8pt;
     font-weight: 600;
     padding: 2px;
     min-height: 18px;
     min-width: 18px;
-}
+}}
 
-#AlphabetBar QPushButton:hover {
-    background-color: #252a35;
-    color: #dcdfe4;
-}
+#AlphabetBar QPushButton:hover {{
+    background-color: {TOKENS["surface_2"]};
+    color: {TOKENS["text_primary"]};
+}}
 
-#AlphabetBar QPushButton:disabled {
-    color: #2a2f38;
-    background-color: transparent;
-}
+#AlphabetBar QPushButton:disabled {{
+    color: {TOKENS["text_dim"]};
+}}
 
-#AlphabetBar QPushButton[active="true"] {
-    background-color: #d4a44a;
-    color: #0c0e12;
-}
-
-/* ── Album Browser ── */
-
-#AlbumBrowser {
-    background-color: transparent;
-    border: none;
-}
-
-#AlbumBrowserInner {
-    background-color: transparent;
-}
-
-/* ── Tree Widget (Duplicates) ── */
-
-QTreeWidget {
-    background-color: #111316;
-    alternate-background-color: #141518;
-    border: none;
-    selection-background-color: #252a35;
-    selection-color: #f8fbff;
-}
-
-QTreeWidget::item {
-    padding: 3px 5px;
-}
-
-QTreeWidget QHeaderView::section {
-    background-color: #111316;
-    color: #7a8494;
-    border: 0;
-    border-bottom: 1px solid #222730;
-    padding: 5px 7px;
-    font-weight: 600;
-    font-size: 9pt;
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
-}
-
-#DuplicateKeepLabel {
-    color: #4CAF50;
-}
-
-#DuplicateDeleteLabel {
-    color: #F44336;
-}
-
-#DuplicateGroupHeader {
-    color: #d4a44a;
-}
+#AlphabetBar QPushButton[active="true"] {{
+    background-color: {TOKENS["accent"]};
+    color: {TOKENS["canvas"]};
+}}
 """
+
+SCROLLBAR_STYLES = f"""
+QScrollBar:vertical {{
+    background: transparent;
+    width: 8px;
+    margin: 2px;
+    border-radius: 4px;
+}}
+
+QScrollBar::handle:vertical {{
+    background: {TOKENS["line_soft"]};
+    min-height: 24px;
+    border-radius: 4px;
+}}
+
+QScrollBar::handle:vertical:hover {{
+    background: {TOKENS["line_strong"]};
+}}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0px;
+}}
+
+QScrollBar:horizontal {{
+    background: transparent;
+    height: 8px;
+    margin: 2px;
+    border-radius: 4px;
+}}
+
+QScrollBar::handle:horizontal {{
+    background: {TOKENS["line_soft"]};
+    min-width: 24px;
+    border-radius: 4px;
+}}
+
+QScrollBar::handle:horizontal:hover {{
+    background: {TOKENS["line_strong"]};
+}}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+    width: 0px;
+}}
+"""
+
+APP_STYLESHEET = "\n".join(
+    [
+        BASE_STYLES,
+        MENU_STYLES,
+        SIDEBAR_STYLES,
+        FORM_STYLES,
+        BUTTON_STYLES,
+        STRUCTURE_STYLES,
+        DATA_VIEW_STYLES,
+        PROGRESS_STYLES,
+        ALBUM_STYLES,
+        SCROLLBAR_STYLES,
+    ]
+)
