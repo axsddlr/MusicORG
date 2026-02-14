@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any
 
 import mutagen
@@ -71,6 +72,35 @@ def _first_int(tags: dict, key: str, default: int = 0) -> int:
         return default
 
 
+def _first_id3(tags: Any, frame_id: str, default: str = "") -> str:
+    """Get first text value from a raw ID3 frame."""
+    if tags is None:
+        return default
+    frame = tags.get(frame_id)
+    if frame is None:
+        return default
+    text = getattr(frame, "text", None)
+    if text and len(text) > 0:
+        return str(text[0])
+    return default
+
+
+def _int_id3(tags: Any, frame_id: str, default: int = 0) -> int:
+    """Get first integer value from a raw ID3 frame."""
+    raw = _first_id3(tags, frame_id, "")
+    if not raw:
+        return default
+    # Handle values like "3/12", "2020-05-01", and mixed text/date frames.
+    raw = raw.split("/", 1)[0]
+    match = re.search(r"\d+", raw)
+    if not match:
+        return default
+    try:
+        return int(match.group(0))
+    except ValueError:
+        return default
+
+
 class TagManager:
     """Reads and writes tags for MP3 and FLAC files using mutagen."""
 
@@ -100,34 +130,30 @@ class TagManager:
 
     def _read_mp3(self, path: Path) -> TagData:
         try:
-            audio = MP3(path, ID3=EasyID3)
+            audio = MP3(path)
         except mutagen.MutagenError:
             return TagData()
-        tags = dict(audio.tags or {})
+        tags = audio.tags
         duration = getattr(audio.info, "length", 0.0) or 0.0
         bitrate = getattr(audio.info, "bitrate", 0) or 0
         artwork_data = b""
         artwork_mime = ""
-        try:
-            raw_audio = MP3(path)
-            if raw_audio.tags:
-                pictures = raw_audio.tags.getall("APIC")
-                if pictures:
-                    picture = pictures[0]
-                    artwork_data = bytes(getattr(picture, "data", b""))
-                    artwork_mime = str(getattr(picture, "mime", "") or "")
-        except mutagen.MutagenError:
-            pass
+        if tags:
+            pictures = tags.getall("APIC")
+            if pictures:
+                picture = pictures[0]
+                artwork_data = bytes(getattr(picture, "data", b""))
+                artwork_mime = str(getattr(picture, "mime", "") or "")
         return TagData(
-            title=_first(tags, "title"),
-            artist=_first(tags, "artist"),
-            album=_first(tags, "album"),
-            albumartist=_first(tags, "albumartist"),
-            track=_first_int(tags, "tracknumber"),
-            disc=_first_int(tags, "discnumber"),
-            year=_first_int(tags, "date"),
-            genre=_first(tags, "genre"),
-            composer=_first(tags, "composer"),
+            title=_first_id3(tags, "TIT2"),
+            artist=_first_id3(tags, "TPE1"),
+            album=_first_id3(tags, "TALB"),
+            albumartist=_first_id3(tags, "TPE2"),
+            track=_int_id3(tags, "TRCK"),
+            disc=_int_id3(tags, "TPOS"),
+            year=_int_id3(tags, "TDRC") or _int_id3(tags, "TYER"),
+            genre=_first_id3(tags, "TCON"),
+            composer=_first_id3(tags, "TCOM"),
             duration=duration,
             bitrate=bitrate,
             artwork_data=artwork_data,

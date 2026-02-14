@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from musicorg.ui.autotag_panel import AutoTagPanel
+from musicorg.ui.artwork_downloader_panel import ArtworkDownloaderPanel
 from musicorg.ui.duplicates_panel import DuplicatesPanel
 from musicorg.ui.settings_dialog import SettingsDialog
 from musicorg.ui.source_panel import SourcePanel
@@ -65,15 +66,18 @@ class MainWindow(QMainWindow):
         self._sync_panel = SyncPanel()
         self._duplicates_panel = DuplicatesPanel()
 
-        # Tag Editor and Auto-Tag are popup dialogs, not stack pages
+        # Tag Editor, Auto-Tag, and Artwork Downloader are popup dialogs.
         self._tag_editor_panel = TagEditorPanel(self)
         self._autotag_panel = AutoTagPanel(self)
+        self._artwork_downloader_panel = ArtworkDownloaderPanel(self)
 
         cache_path = self._settings.tag_cache_db_path
         self._source_panel.set_cache_db_path(cache_path)
         self._tag_editor_panel.set_cache_db_path(cache_path)
         self._autotag_panel.set_cache_db_path(cache_path)
+        self._artwork_downloader_panel.set_cache_db_path(cache_path)
         self._autotag_panel.set_discogs_token(self._settings.discogs_token)
+        self._artwork_downloader_panel.set_discogs_token(self._settings.discogs_token)
         self._duplicates_panel.set_cache_db_path(cache_path)
 
         self._stack.addWidget(self._source_panel)      # index 0
@@ -136,13 +140,14 @@ class MainWindow(QMainWindow):
         help_menu.addAction(about_action)
 
     def _connect_panels(self) -> None:
-        # Context menu → Tag Editor / Auto-Tag
+        # Context menu -> Tag Editor / Auto-Tag / Artwork Downloader
         self._source_panel.send_to_editor_requested.connect(self._send_to_editor)
         self._source_panel.send_to_autotag_requested.connect(self._send_to_autotag)
+        self._source_panel.send_to_artwork_requested.connect(self._send_to_artwork)
         self._source_panel.album_artwork_changed.connect(self._backdrop.set_artwork)
-        # Auto-Tag applied → refresh notice
+        # Auto-Tag applied -> refresh notice
         self._autotag_panel.tags_applied.connect(
-            lambda: self._status_strip.show_message("Tags applied — re-scan to see changes")
+            lambda: self._status_strip.show_message("Tags applied - re-scan to see changes")
         )
 
     def _send_to_editor(self, paths: list[Path]) -> None:
@@ -157,10 +162,17 @@ class MainWindow(QMainWindow):
             self._autotag_panel.show()
             self._autotag_panel.raise_()
 
+    def _send_to_artwork(self, paths: list[Path]) -> None:
+        if paths:
+            self._artwork_downloader_panel.load_files(paths)
+            self._artwork_downloader_panel.show()
+            self._artwork_downloader_panel.raise_()
+
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self._settings, self)
         if dialog.exec():
             self._autotag_panel.set_discogs_token(self._settings.discogs_token)
+            self._artwork_downloader_panel.set_discogs_token(self._settings.discogs_token)
             # Re-apply settings
             if self._settings.source_dir:
                 self._source_panel.set_source_dir(self._settings.source_dir)
@@ -194,6 +206,7 @@ class MainWindow(QMainWindow):
         self._source_panel.shutdown()
         self._tag_editor_panel.shutdown()
         self._autotag_panel.shutdown()
+        self._artwork_downloader_panel.shutdown()
         self._sync_panel.shutdown()
         self._duplicates_panel.shutdown()
         self._settings.window_geometry = self.saveGeometry()

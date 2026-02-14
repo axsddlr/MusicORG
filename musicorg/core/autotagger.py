@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from pathlib import Path
 import re
+import time
 from typing import Any
 from urllib.request import Request, urlopen
 
@@ -85,14 +86,14 @@ class AutoTagger:
 
         attempted_sources.append("MusicBrainz")
         try:
-            results.extend(self._search_album_mb(artist, album))
+            results.extend(self._call_with_retry(self._search_album_mb, artist, album))
         except Exception as exc:
             source_errors["MusicBrainz"] = str(exc)
 
         if self._discogs_token:
             attempted_sources.append("Discogs")
             try:
-                results.extend(self._search_album_discogs(artist, album))
+                results.extend(self._call_with_retry(self._search_album_discogs, artist, album))
             except Exception as exc:
                 source_errors["Discogs"] = str(exc)
 
@@ -152,14 +153,14 @@ class AutoTagger:
 
         attempted_sources.append("MusicBrainz")
         try:
-            results.extend(self._search_item_mb(artist, title))
+            results.extend(self._call_with_retry(self._search_item_mb, artist, title))
         except Exception as exc:
             source_errors["MusicBrainz"] = str(exc)
 
         if self._discogs_token:
             attempted_sources.append("Discogs")
             try:
-                results.extend(self._search_item_discogs(artist, title))
+                results.extend(self._call_with_retry(self._search_item_discogs, artist, title))
             except Exception as exc:
                 source_errors["Discogs"] = str(exc)
 
@@ -332,8 +333,7 @@ class AutoTagger:
             release_year = self._coerce_int(getattr(release, "year", 0), 0)
             release_id = str(getattr(release, "id", "") or "")
             track_rows = self._discogs_tracks(release)
-            images = getattr(release, "images", None) or []
-            artwork_urls = [str(images[0].get("uri", ""))] if images else []
+            artwork_urls = self._discogs_artwork_urls(release)
             genre = ", ".join(
                 part
                 for part in [*list(getattr(release, "genres", []) or []), *list(getattr(release, "styles", []) or [])]
@@ -478,8 +478,7 @@ class AutoTagger:
             release_album = str(getattr(release, "title", "") or "")
             release_year = self._coerce_int(getattr(release, "year", 0), 0)
             release_id = str(getattr(release, "id", "") or "")
-            images = getattr(release, "images", None) or []
-            artwork_urls = [str(images[0].get("uri", ""))] if images else []
+            artwork_urls = self._discogs_artwork_urls(release)
             genre = ", ".join(
                 part
                 for part in [*list(getattr(release, "genres", []) or []), *list(getattr(release, "styles", []) or [])]
@@ -661,14 +660,21 @@ class AutoTagger:
                     f"https://coverartarchive.org/release-group/{release_group_id}/front",
                 ]
             )
-        # Preserve order while de-duplicating.
-        deduped: list[str] = []
-        seen: set[str] = set()
-        for url in urls:
-            if url and url not in seen:
-                seen.add(url)
-                deduped.append(url)
-        return deduped
+        return cls._dedupe_urls(urls)
+
+    @classmethod
+    def _discogs_artwork_urls(cls, release: Any) -> list[str]:
+        urls: list[str] = []
+        images = list(getattr(release, "images", None) or [])
+        for image in images:
+            if not isinstance(image, dict):
+                continue
+            # Discogs image payloads commonly expose both URI variants.
+            for key in ("uri150", "uri"):
+                value = str(image.get(key, "") or "").strip()
+                if value:
+                    urls.append(value)
+        return cls._dedupe_urls(urls)
 
     @staticmethod
     def _discogs_distance(query_artist: str, query_album: str, release: Any) -> float:
@@ -735,23 +741,38 @@ class AutoTagger:
 
     @classmethod
     def _download_artwork_from_urls(cls, urls: list[str]) -> tuple[bytes, str] | None:
-        for url in urls:
+        candidates = cls._expand_artwork_urls(urls)
+        for url in candidates:
             if not url:
                 continue
-            try:
-                req = Request(url, headers={"User-Agent": f"MusicOrg/{__version__}"})
-                with urlopen(req, timeout=12) as resp:
-                    data = resp.read()
-                    if not data:
-                        continue
-                    mime = cls._normalize_content_type(resp.headers.get("Content-Type", ""))
-                    if not mime:
-                        mime = cls._guess_image_mime(data)
-                    if not mime:
-                        mime = "image/jpeg"
-                    return data, mime
-            except Exception:
-                continue
+            for attempt in range(3):
+                try:
+                    req = Request(
+                        url,
+                        headers={
+                            "User-Agent": f"MusicOrg/{__version__}",
+                            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+                            "Referer": "https://musicbrainz.org/",
+                        },
+                    )
+                    with urlopen(req, timeout=12) as resp:
+                        data = resp.read()
+                        if not data:
+                            break
+                        mime = cls._normalize_content_type(resp.headers.get("Content-Type", ""))
+                        guessed_mime = cls._guess_image_mime(data)
+                        if not mime:
+                            mime = guessed_mime
+                        # Skip obvious HTML/error payloads misreported as binary.
+                        if not mime and cls._looks_like_html(data):
+                            break
+                        if not mime:
+                            mime = "image/jpeg"
+                        return data, mime
+                except Exception as exc:
+                    if attempt >= 2 or not cls._is_transient_network_error(exc):
+                        break
+                    time.sleep(0.25 * (attempt + 1))
         return None
 
     @staticmethod
@@ -774,6 +795,75 @@ class AutoTagger:
         if data.startswith(b"BM"):
             return "image/bmp"
         return ""
+
+    @staticmethod
+    def _looks_like_html(data: bytes) -> bool:
+        snippet = data[:256].lstrip().lower()
+        return snippet.startswith(b"<!doctype html") or snippet.startswith(b"<html")
+
+    @classmethod
+    def _expand_artwork_urls(cls, urls: list[str]) -> list[str]:
+        expanded: list[str] = []
+        for raw in urls:
+            url = str(raw or "").strip()
+            if not url:
+                continue
+            expanded.append(url)
+            https_url = ""
+            if url.startswith("http://"):
+                https_url = "https://" + url[len("http://"):]
+                expanded.append(https_url)
+            if "coverartarchive.org" in url and "/front-500" in url:
+                expanded.append(url.replace("/front-500", "/front"))
+                if https_url:
+                    expanded.append(https_url.replace("/front-500", "/front"))
+        return cls._dedupe_urls(expanded)
+
+    def _call_with_retry(self, func, *args):
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                return func(*args)
+            except Exception as exc:
+                last_error = exc
+                if attempt >= 2 or not self._is_transient_network_error(exc):
+                    raise
+                time.sleep(0.35 * (attempt + 1))
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("retry wrapper reached an unexpected state")
+
+    @staticmethod
+    def _dedupe_urls(urls: list[str]) -> list[str]:
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for url in urls:
+            normalized = str(url or "").strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            deduped.append(normalized)
+        return deduped
+
+    @staticmethod
+    def _is_transient_network_error(exc: Exception) -> bool:
+        text = " ".join(str(exc).lower().split())
+        transient_markers = (
+            "timed out",
+            "timeout",
+            "forcibly closed",
+            "connection reset",
+            "remote end closed",
+            "temporarily unavailable",
+            "try again",
+            "service unavailable",
+            "winerror 10054",
+            "http error 429",
+            "http error 502",
+            "http error 503",
+            "http error 504",
+        )
+        return any(marker in text for marker in transient_markers)
 
     @staticmethod
     def _discogs_artist_name(release: Any) -> str:

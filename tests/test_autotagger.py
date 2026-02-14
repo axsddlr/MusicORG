@@ -20,6 +20,11 @@ class _Release:
         self.artists = [_Artist(name) for name in artists]
 
 
+class _ReleaseWithImages:
+    def __init__(self, images: list[dict[str, str]]) -> None:
+        self.images = images
+
+
 class TestMatchCandidate:
     def test_match_percent_perfect(self):
         mc = MatchCandidate(distance=0.0)
@@ -91,6 +96,29 @@ class TestAutoTagger:
         urls = at._mb_artwork_urls(rid, rgid)
         assert f"https://coverartarchive.org/release/{rid}/front-500" in urls
         assert f"https://coverartarchive.org/release-group/{rgid}/front" in urls
+
+    def test_discogs_artwork_urls_collects_uri_variants(self):
+        at = AutoTagger()
+        release = _ReleaseWithImages(
+            images=[
+                {"uri": "http://img.discogs.com/full.jpg", "uri150": "http://img.discogs.com/150.jpg"},
+                {"uri": "http://img.discogs.com/full.jpg"},
+            ]
+        )
+        urls = at._discogs_artwork_urls(release)
+        assert "http://img.discogs.com/150.jpg" in urls
+        assert "http://img.discogs.com/full.jpg" in urls
+        assert len(urls) == 2
+
+    def test_expand_artwork_urls_adds_https_and_coverart_fallback(self):
+        at = AutoTagger()
+        urls = at._expand_artwork_urls(
+            ["http://coverartarchive.org/release/abc/front-500"]
+        )
+        assert "http://coverartarchive.org/release/abc/front-500" in urls
+        assert "https://coverartarchive.org/release/abc/front-500" in urls
+        assert "http://coverartarchive.org/release/abc/front" in urls
+        assert "https://coverartarchive.org/release/abc/front" in urls
 
     def test_discogs_distance(self):
         at = AutoTagger()
@@ -193,6 +221,30 @@ class TestAutoTagger:
 
         with pytest.raises(RuntimeError, match="MusicBrainz: mb down"):
             at.search_album_with_diagnostics(["dummy.mp3"])
+
+    def test_search_album_with_diagnostics_retries_transient_mb_errors(self, monkeypatch):
+        at = AutoTagger()
+        attempts = {"count": 0}
+        expected = MatchCandidate(source="MusicBrainz", album="Retried", distance=0.1)
+
+        monkeypatch.setattr(
+            at,
+            "_resolve_hints_from_files",
+            lambda paths, artist_hint, album_hint: ("Artist", "Album"),
+        )
+
+        def _mb_once_then_success(artist, album):
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                raise RuntimeError("urlopen error [WinError 10054] An existing connection was forcibly closed")
+            return [expected]
+
+        monkeypatch.setattr(at, "_search_album_mb", _mb_once_then_success)
+
+        payload = at.search_album_with_diagnostics(["dummy.mp3"])
+        assert payload["candidates"] == [expected]
+        assert payload["source_errors"] == {}
+        assert attempts["count"] == 2
 
     def test_guess_image_mime(self):
         at = AutoTagger()

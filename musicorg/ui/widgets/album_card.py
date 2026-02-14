@@ -99,6 +99,7 @@ class TrackRow(QFrame):
         menu = QMenu(self)
         menu.addAction("Tag Editor", lambda: self._fire_context("editor"))
         menu.addAction("Auto-Tag", lambda: self._fire_context("autotag"))
+        menu.addAction("Artwork Downloader", lambda: self._fire_context("artwork"))
         menu.exec(event.globalPos())
         event.accept()
 
@@ -131,6 +132,7 @@ class AlbumCard(QFrame):
     album_clicked = Signal(bytes)
     send_to_editor = Signal(list)
     send_to_autotag = Signal(list)
+    send_to_artwork = Signal(list)
 
     def __init__(
         self,
@@ -234,11 +236,17 @@ class AlbumCard(QFrame):
             self.send_to_editor.emit(paths)
         elif action == "autotag":
             self.send_to_autotag.emit(paths)
+        elif action == "artwork":
+            self.send_to_artwork.emit(paths)
 
     def contextMenuEvent(self, event) -> None:
         menu = QMenu(self)
         menu.addAction("Tag Editor", lambda: self.send_to_editor.emit(self._all_paths))
         menu.addAction("Auto-Tag", lambda: self.send_to_autotag.emit(self._all_paths))
+        menu.addAction(
+            "Artwork Downloader",
+            lambda: self.send_to_artwork.emit(self._all_paths),
+        )
         menu.exec(event.globalPos())
         event.accept()
 

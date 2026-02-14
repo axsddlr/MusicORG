@@ -28,6 +28,7 @@ class SourcePanel(QWidget):
     album_artwork_changed = Signal(bytes)
     send_to_editor_requested = Signal(list)
     send_to_autotag_requested = Signal(list)
+    send_to_artwork_requested = Signal(list)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -46,6 +47,7 @@ class SourcePanel(QWidget):
         self._scan_target_path = ""
         self._last_scanned_path = ""
         self._pending_auto_scan_path = ""
+        self._first_batch_rendered = False
         self._auto_scan_timer = QTimer(self)
         self._auto_scan_timer.setSingleShot(True)
         self._auto_scan_timer.setInterval(400)
@@ -122,6 +124,7 @@ class SourcePanel(QWidget):
         self._album_browser.album_artwork_changed.connect(self.album_artwork_changed.emit)
         self._album_browser.send_to_editor.connect(self.send_to_editor_requested.emit)
         self._album_browser.send_to_autotag.connect(self.send_to_autotag_requested.emit)
+        self._album_browser.send_to_artwork.connect(self.send_to_artwork_requested.emit)
         content_layout.addWidget(self._album_browser, 1)
 
         browser_splitter.addWidget(artist_pane)
@@ -244,6 +247,7 @@ class SourcePanel(QWidget):
             mtimes_ns=mtimes_ns,
             cache_db_path=self._cache_db_path,
         )
+        self._first_batch_rendered = False
         self._tag_thread = QThread()
         self._tag_worker.moveToThread(self._tag_thread)
         self._tag_thread.started.connect(self._tag_worker.run)
@@ -253,6 +257,10 @@ class SourcePanel(QWidget):
         )
         self._tag_worker.finished.connect(
             self._on_tags_read,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        self._tag_worker.batch_ready.connect(
+            self._on_tag_batch_ready,
             Qt.ConnectionType.QueuedConnection,
         )
         self._tag_worker.error.connect(self._on_scan_error)
@@ -267,13 +275,36 @@ class SourcePanel(QWidget):
     def _on_tag_read_progress(self, current: int, total: int, message: str) -> None:
         self._progress.update_progress(current, total, f"Importing files {current}/{total}")
 
+    def _on_tag_batch_ready(self, batch: object) -> None:
+        if not isinstance(batch, list):
+            return
+        rows: list[FileTableRow] = []
+        for item in batch:
+            if not isinstance(item, (list, tuple)) or len(item) != 2:
+                continue
+            path, tag_data = item
+            path_obj = Path(path)
+            rows.append(
+                FileTableRow(
+                    path=path_obj,
+                    tags=tag_data,
+                    size=self._scanned_sizes.get(path_obj, 0),
+                )
+            )
+        if not rows:
+            return
+        self._all_rows.extend(rows)
+        self._merge_into_library_index(rows)
+        if not self._first_batch_rendered:
+            self._first_batch_rendered = True
+            self._strip_redundant_artwork()
+            self._populate_artist_list()
+
     def _on_tags_read(self, payload: object) -> None:
-        results = payload
         failures: list[tuple[Path, str]] = []
         cache_hits = 0
         cache_misses = 0
         if isinstance(payload, dict):
-            results = payload.get("results", [])
             try:
                 cache_hits = int(payload.get("cache_hits", 0))
             except (TypeError, ValueError):
@@ -289,30 +320,24 @@ class SourcePanel(QWidget):
                         continue
                     path, msg = item
                     failures.append((Path(path), str(msg)))
-        if not isinstance(results, list):
-            results = []
 
-        rows: list[FileTableRow] = []
-        for path, tag_data in results:
-            size = self._scanned_sizes.get(path, 0)
-            rows.append(FileTableRow(path=path, tags=tag_data, size=size))
-
-        self._all_rows = rows
-        self._build_library_index(rows)
+        # _all_rows and _library_index were already built incrementally
+        # by _on_tag_batch_ready; just do the final artwork strip + artist
+        # list refresh (which reuses cached thumbnails).
         self._strip_redundant_artwork()
         self._populate_artist_list()
 
-        current_paths = {row.path for row in rows}
+        current_paths = {row.path for row in self._all_rows}
         if self._previous_scan_paths:
             new_count = len(current_paths - self._previous_scan_paths)
             if new_count > 0:
                 new_label = f"{new_count} new since last scan"
             else:
                 new_label = "no new files"
-            summary = f"Found {len(rows)} files ({new_label})"
+            summary = f"Found {len(self._all_rows)} files ({new_label})"
         else:
             summary = (
-                f"Found {len(rows)} files ({cache_hits} cached, {cache_misses} read)"
+                f"Found {len(self._all_rows)} files ({cache_hits} cached, {cache_misses} read)"
             )
         self._previous_scan_paths = current_paths
         if failures:
@@ -353,6 +378,25 @@ class SourcePanel(QWidget):
                 )
         self._library_index = index
 
+    def _merge_into_library_index(self, rows: list[FileTableRow]) -> None:
+        affected: set[tuple[str, str]] = set()
+        for row in rows:
+            artist = (row.tags.albumartist or row.tags.artist or "Unknown Artist").strip()
+            album = (row.tags.album or "Unknown Album").strip()
+            artist_bucket = self._library_index.setdefault(artist, {})
+            album_bucket = artist_bucket.setdefault(album, [])
+            album_bucket.append(row)
+            affected.add((artist, album))
+
+        for artist, album in affected:
+            album_rows = self._library_index[artist][album]
+            album_rows.sort(
+                key=lambda r: (
+                    9999 if r.tags.track <= 0 else r.tags.track,
+                    r.filename.lower(),
+                )
+            )
+
     def _strip_redundant_artwork(self) -> None:
         for albums in self._library_index.values():
             for album_rows in albums.values():
@@ -368,10 +412,22 @@ class SourcePanel(QWidget):
 
     def _populate_artist_list(self) -> None:
         self._all_artists = sorted(self._library_index)
-        self._artist_meta = {}
         for artist in self._all_artists:
             albums = self._library_index[artist]
-            self._artist_meta[artist] = (self._build_artist_thumbnail(albums), len(albums))
+            album_count = len(albums)
+            existing = self._artist_meta.get(artist)
+            if existing is not None:
+                # Reuse cached thumbnail, just update album count
+                self._artist_meta[artist] = (existing[0], album_count)
+            else:
+                self._artist_meta[artist] = (
+                    self._build_artist_thumbnail(albums),
+                    album_count,
+                )
+        # Remove stale entries for artists no longer in the index
+        stale = self._artist_meta.keys() - set(self._all_artists)
+        for key in stale:
+            del self._artist_meta[key]
         self._apply_artist_filter()
 
     def _build_artist_thumbnail(self, albums: dict[str, list[FileTableRow]]) -> QPixmap:
@@ -486,6 +542,7 @@ class SourcePanel(QWidget):
         self._all_artists = []
         self._artist_meta = {}
         self._active_artist = ""
+        self._first_batch_rendered = False
         self._artist_list_widget.clear()
         self._album_browser.clear()
         self._alphabet_bar.set_available_letters(set())
@@ -552,6 +609,10 @@ class SourcePanel(QWidget):
                 pass
             try:
                 worker.finished.disconnect(self._on_tags_read)
+            except (RuntimeError, TypeError):
+                pass
+            try:
+                worker.batch_ready.disconnect(self._on_tag_batch_ready)
             except (RuntimeError, TypeError):
                 pass
             try:
