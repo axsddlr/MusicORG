@@ -7,8 +7,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QSplitter, QTableWidget, QTableWidgetItem,
+    QAbstractItemView, QDialog, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
+    QLineEdit, QMessageBox, QPushButton, QSplitter, QTableWidget, QTableWidgetItem,
     QSizePolicy,
     QVBoxLayout, QWidget,
 )
@@ -20,13 +20,15 @@ from musicorg.ui.widgets.progress_bar import ProgressIndicator
 from musicorg.workers.autotag_worker import ApplyMatchWorker, AutoTagWorker
 
 
-class AutoTagPanel(QWidget):
-    """Panel for auto-tagging files via MusicBrainz/Discogs lookup."""
+class AutoTagPanel(QDialog):
+    """Dialog for auto-tagging files via MusicBrainz/Discogs lookup."""
 
     tags_applied = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setWindowTitle("Auto-Tag")
+        self.resize(750, 600)
         self._files: list[Path] = []
         self._candidates: list[MatchCandidate] = []
         self._search_worker: AutoTagWorker | None = None

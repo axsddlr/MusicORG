@@ -97,9 +97,8 @@ class TrackRow(QFrame):
 
     def contextMenuEvent(self, event) -> None:
         menu = QMenu(self)
-        send_to = menu.addMenu("Send to")
-        send_to.addAction("Tag Editor", lambda: self._fire_context("editor"))
-        send_to.addAction("Auto-Tag", lambda: self._fire_context("autotag"))
+        menu.addAction("Tag Editor", lambda: self._fire_context("editor"))
+        menu.addAction("Auto-Tag", lambda: self._fire_context("autotag"))
         menu.exec(event.globalPos())
         event.accept()
 
@@ -238,9 +237,8 @@ class AlbumCard(QFrame):
 
     def contextMenuEvent(self, event) -> None:
         menu = QMenu(self)
-        send_to = menu.addMenu("Send to")
-        send_to.addAction("Tag Editor", lambda: self.send_to_editor.emit(self._all_paths))
-        send_to.addAction("Auto-Tag", lambda: self.send_to_autotag.emit(self._all_paths))
+        menu.addAction("Tag Editor", lambda: self.send_to_editor.emit(self._all_paths))
+        menu.addAction("Auto-Tag", lambda: self.send_to_autotag.emit(self._all_paths))
         menu.exec(event.globalPos())
         event.accept()
 

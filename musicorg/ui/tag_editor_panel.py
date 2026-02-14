@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Qt
 from PySide6.QtWidgets import (
-    QApplication, QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget,
+    QApplication, QDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget,
 )
 
 from musicorg.core.tag_cache import TagCache
@@ -16,11 +16,13 @@ from musicorg.ui.widgets.tag_form import TagForm
 from musicorg.workers.tag_write_worker import TagWriteWorker
 
 
-class TagEditorPanel(QWidget):
-    """Panel for viewing and editing ID3 tags for selected files."""
+class TagEditorPanel(QDialog):
+    """Dialog for viewing and editing ID3 tags for selected files."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setWindowTitle("Tag Editor")
+        self.resize(700, 550)
         self._files: list[Path] = []
         self._current_index: int = -1
         self._original_tags: TagData | None = None

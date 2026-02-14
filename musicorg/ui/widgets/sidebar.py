@@ -51,8 +51,6 @@ class SidebarNav(QFrame):
 
     _NAV_ITEMS = [
         ("\U0001F4C1", "Source"),
-        ("\u270E", "Tag Editor"),
-        ("\u2728", "Auto-Tag"),
         ("\u21C4", "Sync"),
         ("\U0001F50D", "Duplicates"),
     ]

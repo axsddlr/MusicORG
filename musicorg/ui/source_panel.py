@@ -25,7 +25,6 @@ from musicorg.workers.tag_read_worker import TagReadWorker
 class SourcePanel(QWidget):
     """Panel for browsing source directory and scanning audio files."""
 
-    files_selected = Signal(list)  # list[Path]
     album_artwork_changed = Signal(bytes)
     send_to_editor_requested = Signal(list)
     send_to_autotag_requested = Signal(list)
@@ -76,10 +75,6 @@ class SourcePanel(QWidget):
         self._scan_btn = QPushButton("Scan")
         self._scan_btn.setProperty("role", "accent")
         self._scan_btn.clicked.connect(lambda: self._start_scan(force=True))
-        self._send_to_editor_btn = QPushButton("Send to Tag Editor")
-        self._send_to_editor_btn.setEnabled(False)
-        self._send_to_autotag_btn = QPushButton("Send to Auto-Tag")
-        self._send_to_autotag_btn.setEnabled(False)
         self._select_all_btn = QPushButton("Select All")
         self._select_all_btn.setEnabled(False)
         self._select_all_btn.clicked.connect(self._select_all_visible_tracks)
@@ -90,8 +85,6 @@ class SourcePanel(QWidget):
         btn_layout.addWidget(self._select_all_btn)
         btn_layout.addWidget(self._deselect_all_btn)
         btn_layout.addStretch()
-        btn_layout.addWidget(self._send_to_editor_btn)
-        btn_layout.addWidget(self._send_to_autotag_btn)
         layout.addLayout(btn_layout)
 
         # Browser layout: artists sidebar + album browser
@@ -151,25 +144,8 @@ class SourcePanel(QWidget):
     def set_cache_db_path(self, path: str) -> None:
         self._cache_db_path = path
 
-    def connect_send_to_editor(self, slot) -> None:
-        self._send_to_editor_btn.clicked.connect(
-            lambda: slot(self._get_selected_paths())
-        )
-
-    def connect_send_to_autotag(self, slot) -> None:
-        self._send_to_autotag_btn.clicked.connect(
-            lambda: slot(self._get_selected_paths())
-        )
-
-    def _get_selected_paths(self) -> list[Path]:
-        return self._selection_manager.selected_paths()
-
     def _on_selection_changed(self, paths: list[Path]) -> None:
-        has_selection = len(paths) > 0
-        self._send_to_editor_btn.setEnabled(has_selection)
-        self._send_to_autotag_btn.setEnabled(has_selection)
         self._update_selection_action_buttons()
-        self.files_selected.emit(paths if has_selection else [])
 
     def _visible_paths(self) -> list[Path]:
         albums = self._library_index.get(self._active_artist, {})
