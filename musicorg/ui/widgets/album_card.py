@@ -42,7 +42,7 @@ def _format_total_duration(seconds: float) -> str:
 
 
 class TrackRow(QFrame):
-    """Clickable row: track # | title | duration. Toggles selection."""
+    """Clickable row: track # | title | duration with modifier-based selection."""
 
     def __init__(
         self,
@@ -114,7 +114,13 @@ class TrackRow(QFrame):
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton and self._selection_manager is not None:
-            self._selection_manager.toggle(self._path)
+            modifiers = event.modifiers()
+            allow_select = bool(
+                modifiers
+                & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+            )
+            if allow_select:
+                self._selection_manager.select(self._path)
         super().mousePressEvent(event)
 
     def keyPressEvent(self, event) -> None:
