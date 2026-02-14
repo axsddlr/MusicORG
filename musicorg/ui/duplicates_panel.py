@@ -164,11 +164,11 @@ class DuplicatesPanel(QWidget):
         )
         self._progress.finish(f"Found {len(groups)} duplicate groups")
 
-    def _on_scan_error(self, msg: str) -> None:
+    def _on_scan_error(self, error_message: str) -> None:
         self._scan_btn.setEnabled(True)
         self._cancel_btn.setEnabled(False)
-        self._progress.finish(f"Error: {msg}")
-        QMessageBox.critical(self, "Scan Error", msg)
+        self._progress.finish(f"Error: {error_message}")
+        QMessageBox.critical(self, "Scan Error", error_message)
 
     def _on_scan_cancelled(self) -> None:
         self._scan_btn.setEnabled(True)
@@ -285,11 +285,11 @@ class DuplicatesPanel(QWidget):
             detail = "\n".join(failed[:20])
             QMessageBox.warning(self, "Some Deletions Failed", detail)
 
-    def _on_delete_error(self, msg: str) -> None:
+    def _on_delete_error(self, error_message: str) -> None:
         self._scan_btn.setEnabled(True)
         self._cancel_btn.setEnabled(False)
-        self._progress.finish(f"Error: {msg}")
-        QMessageBox.critical(self, "Delete Error", msg)
+        self._progress.finish(f"Error: {error_message}")
+        QMessageBox.critical(self, "Delete Error", error_message)
 
     def _on_delete_cancelled(self) -> None:
         self._scan_btn.setEnabled(True)
@@ -303,51 +303,51 @@ class DuplicatesPanel(QWidget):
             self._delete_worker.cancel()
 
     def _cleanup_scan(self) -> None:
-        worker = self._scan_worker
-        thread = self._scan_thread
-        if worker and thread:
+        scan_worker = self._scan_worker
+        scan_thread = self._scan_thread
+        if scan_worker and scan_thread:
             for sig, slot in [
-                (worker.progress, self._on_scan_progress),
-                (worker.finished, self._on_scan_done),
-                (worker.error, self._on_scan_error),
-                (worker.cancelled, self._on_scan_cancelled),
-                (worker.finished, thread.quit),
-                (worker.error, thread.quit),
-                (worker.cancelled, thread.quit),
+                (scan_worker.progress, self._on_scan_progress),
+                (scan_worker.finished, self._on_scan_done),
+                (scan_worker.error, self._on_scan_error),
+                (scan_worker.cancelled, self._on_scan_cancelled),
+                (scan_worker.finished, scan_thread.quit),
+                (scan_worker.error, scan_thread.quit),
+                (scan_worker.cancelled, scan_thread.quit),
             ]:
                 try:
                     sig.disconnect(slot)
                 except (RuntimeError, TypeError):
                     pass
-        if worker:
-            worker.deleteLater()
+        if scan_worker:
+            scan_worker.deleteLater()
             self._scan_worker = None
-        if thread:
-            thread.deleteLater()
+        if scan_thread:
+            scan_thread.deleteLater()
             self._scan_thread = None
 
     def _cleanup_delete(self) -> None:
-        worker = self._delete_worker
-        thread = self._delete_thread
-        if worker and thread:
+        delete_worker = self._delete_worker
+        delete_thread = self._delete_thread
+        if delete_worker and delete_thread:
             for sig, slot in [
-                (worker.progress, self._on_delete_progress),
-                (worker.finished, self._on_delete_done),
-                (worker.error, self._on_delete_error),
-                (worker.cancelled, self._on_delete_cancelled),
-                (worker.finished, thread.quit),
-                (worker.error, thread.quit),
-                (worker.cancelled, thread.quit),
+                (delete_worker.progress, self._on_delete_progress),
+                (delete_worker.finished, self._on_delete_done),
+                (delete_worker.error, self._on_delete_error),
+                (delete_worker.cancelled, self._on_delete_cancelled),
+                (delete_worker.finished, delete_thread.quit),
+                (delete_worker.error, delete_thread.quit),
+                (delete_worker.cancelled, delete_thread.quit),
             ]:
                 try:
                     sig.disconnect(slot)
                 except (RuntimeError, TypeError):
                     pass
-        if worker:
-            worker.deleteLater()
+        if delete_worker:
+            delete_worker.deleteLater()
             self._delete_worker = None
-        if thread:
-            thread.deleteLater()
+        if delete_thread:
+            delete_thread.deleteLater()
             self._delete_thread = None
 
     def shutdown(self, timeout_ms: int = 3000) -> None:

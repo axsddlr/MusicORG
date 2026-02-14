@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 from PySide6.QtCore import QThread, Qt
 from PySide6.QtWidgets import (
@@ -13,7 +14,7 @@ from musicorg.core.tag_cache import TagCache
 from musicorg.core.tagger import TagData, TagManager
 from musicorg.ui.widgets.progress_bar import ProgressIndicator
 from musicorg.ui.widgets.tag_form import TagForm
-from musicorg.workers.tag_write_worker import TagWriteWorker
+from musicorg.workers.tag_write_worker import TagWriteFailure, TagWriteSummary, TagWriteWorker
 
 
 class TagEditorPanel(QDialog):
@@ -28,8 +29,8 @@ class TagEditorPanel(QDialog):
         self._original_tags: TagData | None = None
         self._tag_manager = TagManager()
         self._cache_db_path = ""
-        self._worker: TagWriteWorker | None = None
-        self._thread: QThread | None = None
+        self._save_worker: TagWriteWorker | None = None
+        self._save_thread: QThread | None = None
 
         self._setup_ui()
 
@@ -143,8 +144,8 @@ class TagEditorPanel(QDialog):
             self._original_tags = tags
             self._progress.start("Saved!")
             self._progress.finish(f"Saved tags for {path.name}")
-        except Exception as e:
-            QMessageBox.critical(self, "Save Error", str(e))
+        except Exception as exc:
+            QMessageBox.critical(self, "Save Error", str(exc))
 
     def _revert_tags(self) -> None:
         if self._original_tags:
@@ -154,7 +155,7 @@ class TagEditorPanel(QDialog):
         """Save the current form's tags to ALL loaded files."""
         if not self._files:
             return
-        if self._thread and self._thread.isRunning():
+        if self._save_thread and self._save_thread.isRunning():
             QMessageBox.information(
                 self,
                 "Save In Progress",
@@ -177,38 +178,23 @@ class TagEditorPanel(QDialog):
         self._save_btn.setEnabled(False)
         self._save_all_btn.setEnabled(False)
 
-        self._worker = TagWriteWorker(items, cache_db_path=self._cache_db_path)
-        self._thread = QThread()
-        self._worker.moveToThread(self._thread)
-        self._thread.started.connect(self._worker.run)
-        self._worker.progress.connect(
+        self._save_worker = TagWriteWorker(items, cache_db_path=self._cache_db_path)
+        self._save_thread = QThread()
+        self._save_worker.moveToThread(self._save_thread)
+        self._save_thread.started.connect(self._save_worker.run)
+        self._save_worker.progress.connect(
             self._on_save_all_progress,
             Qt.ConnectionType.QueuedConnection,
         )
-        self._worker.finished.connect(self._on_save_all_done)
-        self._worker.error.connect(self._on_save_all_error)
-        self._worker.finished.connect(self._thread.quit)
-        self._worker.error.connect(self._thread.quit)
-        self._thread.finished.connect(self._cleanup_thread)
-        self._thread.start()
+        self._save_worker.finished.connect(self._on_save_all_done)
+        self._save_worker.error.connect(self._on_save_all_error)
+        self._save_worker.finished.connect(self._save_thread.quit)
+        self._save_worker.error.connect(self._save_thread.quit)
+        self._save_thread.finished.connect(self._cleanup_thread)
+        self._save_thread.start()
 
     def _on_save_all_done(self, payload: object) -> None:
-        count = 0
-        failed: list[tuple[Path, str]] = []
-        if isinstance(payload, dict):
-            try:
-                count = int(payload.get("written", 0))
-            except (TypeError, ValueError):
-                count = 0
-            raw_failed = payload.get("failed", [])
-            if isinstance(raw_failed, list):
-                for item in raw_failed:
-                    if not isinstance(item, (list, tuple)) or len(item) != 2:
-                        continue
-                    path, msg = item
-                    failed.append((Path(path), str(msg)))
-        elif isinstance(payload, int):
-            count = payload
+        count, failed = self._coerce_save_summary(payload)
 
         if failed:
             self._progress.finish(
@@ -232,42 +218,63 @@ class TagEditorPanel(QDialog):
     def _on_save_all_progress(self, current: int, total: int, message: str) -> None:
         self._progress.update_progress(current, total, f"Writing: {message}")
 
-    def _on_save_all_error(self, msg: str) -> None:
-        self._progress.finish(f"Error: {msg}")
+    def _on_save_all_error(self, error_message: str) -> None:
+        self._progress.finish(f"Error: {error_message}")
         self._save_btn.setEnabled(True)
         self._save_all_btn.setEnabled(len(self._files) > 1)
-        QMessageBox.critical(self, "Save Error", msg)
+        QMessageBox.critical(self, "Save Error", error_message)
+
+    @staticmethod
+    def _coerce_save_summary(payload: object) -> tuple[int, list[TagWriteFailure]]:
+        if isinstance(payload, int):
+            return max(0, payload), []
+        if not isinstance(payload, dict):
+            return 0, []
+
+        summary = cast(TagWriteSummary, payload)
+        try:
+            written_count = max(0, int(summary.get("written", 0)))
+        except (TypeError, ValueError):
+            written_count = 0
+        failed_writes: list[TagWriteFailure] = []
+        raw_failed = summary.get("failed", [])
+        if isinstance(raw_failed, list):
+            for item in raw_failed:
+                if not isinstance(item, (list, tuple)) or len(item) != 2:
+                    continue
+                failed_writes.append((Path(item[0]), str(item[1])))
+        return written_count, failed_writes
 
     def _cleanup_thread(self) -> None:
-        worker = self._worker
-        thread = self._thread
-        if worker and thread:
+        save_worker = self._save_worker
+        save_thread = self._save_thread
+        if save_worker and save_thread:
             try:
-                worker.progress.disconnect(self._on_save_all_progress)
+                save_worker.progress.disconnect(self._on_save_all_progress)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.finished.disconnect(self._on_save_all_done)
+                save_worker.finished.disconnect(self._on_save_all_done)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.error.disconnect(self._on_save_all_error)
+                save_worker.error.disconnect(self._on_save_all_error)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.finished.disconnect(thread.quit)
+                save_worker.finished.disconnect(save_thread.quit)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.error.disconnect(thread.quit)
+                save_worker.error.disconnect(save_thread.quit)
             except (RuntimeError, TypeError):
                 pass
-        if worker:
-            worker.deleteLater()
-            self._worker = None
-        if thread:
-            thread.deleteLater()
-            self._thread = None
+        if save_worker:
+            save_worker.deleteLater()
+            self._save_worker = None
+        if save_thread:
+            save_thread.deleteLater()
+            self._save_thread = None
 
     def _invalidate_cache_entries(self, paths: list[Path]) -> None:
         if not self._cache_db_path or not paths:
@@ -287,9 +294,9 @@ class TagEditorPanel(QDialog):
                     pass
 
     def shutdown(self, timeout_ms: int = 3000) -> None:
-        if self._worker:
-            self._worker.cancel()
-        if self._thread and self._thread.isRunning():
-            self._thread.quit()
-            self._thread.wait()
+        if self._save_worker:
+            self._save_worker.cancel()
+        if self._save_thread and self._save_thread.isRunning():
+            self._save_thread.quit()
+            self._save_thread.wait()
         self._cleanup_thread()

@@ -7,7 +7,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 import re
 import time
-from typing import Any
+from typing import Any, Callable, ParamSpec, TypeVar, TypedDict
 from urllib.request import Request, urlopen
 
 from musicorg import __version__
@@ -17,6 +17,39 @@ from musicorg.core.tagger import TagData, TagManager
 _UUID_RE = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
+
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+class TrackMetadata(TypedDict):
+    track: int
+    disc: int
+    title: str
+    artist: str
+    length: int
+
+
+class MatchPayload(TypedDict, total=False):
+    source: str
+    artist: str
+    album: str
+    year: int
+    release_id: str
+    release_group_id: str
+    tracks: list[TrackMetadata]
+    artwork_urls: list[str]
+    genre: str
+    track: int
+    disc: int
+    title: str
+    length: int
+
+
+class SearchDiagnostics(TypedDict):
+    candidates: list["MatchCandidate"]
+    source_errors: dict[str, str]
+    source_counts: dict[str, int]
 
 
 @dataclass
@@ -28,8 +61,8 @@ class MatchCandidate:
     album: str = ""
     year: int = 0
     distance: float = 1.0  # 0.0 = perfect, 1.0 = worst
-    tracks: list[dict[str, Any]] = field(default_factory=list)
-    raw_match: Any = None
+    tracks: list[TrackMetadata] = field(default_factory=list)
+    raw_match: MatchPayload | None = None
 
     @property
     def match_percent(self) -> float:
@@ -72,7 +105,7 @@ class AutoTagger:
         paths: list[str | Path],
         artist_hint: str = "",
         album_hint: str = "",
-    ) -> dict[str, Any]:
+    ) -> SearchDiagnostics:
         """Search album matches with per-source diagnostics."""
         if not paths:
             return self._build_search_payload([], {})
@@ -126,7 +159,7 @@ class AutoTagger:
         path: str | Path,
         artist_hint: str = "",
         title_hint: str = "",
-    ) -> dict[str, Any]:
+    ) -> SearchDiagnostics:
         """Search single-track matches with per-source diagnostics."""
         path = Path(path)
         if not path.exists():
@@ -178,28 +211,28 @@ class AutoTagger:
         """Apply a selected dict-based match candidate to one or more files."""
         if not paths:
             return False
-        raw = getattr(match, "raw_match", None)
-        if not isinstance(raw, dict):
+        match_payload = getattr(match, "raw_match", None)
+        if not isinstance(match_payload, dict):
             return False
 
         try:
-            artwork = self._download_artwork_from_urls(raw.get("artwork_urls", []))
+            artwork = self._download_artwork_from_urls(match_payload.get("artwork_urls", []))
             artwork_data = artwork[0] if artwork else None
             artwork_mime = artwork[1] if artwork else ""
 
-            tm = TagManager()
-            if isinstance(raw.get("tracks"), list):
+            tag_writer = TagManager()
+            if isinstance(match_payload.get("tracks"), list):
                 return self._apply_album_match(
-                    tm=tm,
+                    tag_writer=tag_writer,
                     paths=paths,
-                    raw=raw,
+                    match_payload=match_payload,
                     artwork_data=artwork_data,
                     artwork_mime=artwork_mime,
                 )
             return self._apply_single_match(
-                tm=tm,
+                tag_writer=tag_writer,
                 paths=paths,
-                raw=raw,
+                match_payload=match_payload,
                 artwork_data=artwork_data,
                 artwork_mime=artwork_mime,
             )
@@ -264,7 +297,7 @@ class AutoTagger:
             score = float(release.get("ext:score", 0) or 0.0)
             distance = 1.0 - max(0.0, min(score, 100.0)) / 100.0
 
-            raw_match = {
+            raw_match: MatchPayload = {
                 "source": "MusicBrainz",
                 "artist": artist_name,
                 "album": title,
@@ -288,8 +321,8 @@ class AutoTagger:
             )
         return candidates
 
-    def _mb_album_tracks(self, release: dict[str, Any]) -> list[dict[str, Any]]:
-        tracks: list[dict[str, Any]] = []
+    def _mb_album_tracks(self, release: dict[str, Any]) -> list[TrackMetadata]:
+        tracks: list[TrackMetadata] = []
         medium_list = release.get("medium-list", [])
         for medium_index, medium in enumerate(medium_list, start=1):
             disc_num = self._coerce_int(medium.get("position", medium_index), medium_index)
@@ -341,7 +374,7 @@ class AutoTagger:
             )
             distance = self._discogs_distance(artist, album, release)
 
-            raw_match = {
+            raw_match: MatchPayload = {
                 "source": "Discogs",
                 "artist": release_artist,
                 "album": release_album,
@@ -365,8 +398,8 @@ class AutoTagger:
             )
         return candidates
 
-    def _discogs_tracks(self, release: Any) -> list[dict[str, Any]]:
-        track_rows: list[dict[str, Any]] = []
+    def _discogs_tracks(self, release: Any) -> list[TrackMetadata]:
+        track_rows: list[TrackMetadata] = []
         tracklist = list(getattr(release, "tracklist", []) or [])
         for index, track in enumerate(tracklist, start=1):
             disc_num, track_num = self._parse_discogs_position(
@@ -411,7 +444,7 @@ class AutoTagger:
             length_ms = recording.get("length", 0)
             length_secs = int(length_ms) // 1000 if str(length_ms).isdigit() else 0
 
-            raw_match = {
+            raw_match: MatchPayload = {
                 "source": "MusicBrainz",
                 "artist": item_artist,
                 "album": item_album,
@@ -490,7 +523,7 @@ class AutoTagger:
             matched_title = str(getattr(best_track, "title", "") or "")
             length = self._parse_duration(str(getattr(best_track, "duration", "") or ""))
 
-            raw_match = {
+            raw_match: MatchPayload = {
                 "source": "Discogs",
                 "artist": release_artist,
                 "album": release_album,
@@ -529,9 +562,9 @@ class AutoTagger:
 
     def _apply_album_match(
         self,
-        tm: TagManager,
+        tag_writer: TagManager,
         paths: list[str | Path],
-        raw: dict[str, Any],
+        match_payload: MatchPayload,
         artwork_data: bytes | None,
         artwork_mime: str,
     ) -> bool:
@@ -541,7 +574,7 @@ class AutoTagger:
             disc = 1
             track = index + 1
             try:
-                tags = tm.read(path_obj)
+                tags = tag_writer.read(path_obj)
                 if tags.disc > 0:
                     disc = tags.disc
                 if tags.track > 0:
@@ -551,15 +584,15 @@ class AutoTagger:
             file_rows.append((disc, track, index, path_obj))
         file_rows.sort(key=lambda row: (row[0], row[1], row[2]))
 
-        tracks = list(raw.get("tracks") or [])
+        tracks = list(match_payload.get("tracks") or [])
         tracks.sort(key=lambda row: (self._coerce_int(row.get("disc"), 1), self._coerce_int(row.get("track"), 0)))
         if not tracks:
             return False
 
-        album_artist = str(raw.get("artist", "") or "")
-        album = str(raw.get("album", "") or "")
-        year = self._coerce_int(raw.get("year", 0), 0)
-        genre = str(raw.get("genre", "") or "")
+        album_artist = str(match_payload.get("artist", "") or "")
+        album = str(match_payload.get("album", "") or "")
+        year = self._coerce_int(match_payload.get("year", 0), 0)
+        genre = str(match_payload.get("genre", "") or "")
 
         for index, (_, _, _, path_obj) in enumerate(file_rows):
             track_row = tracks[index] if index < len(tracks) else tracks[-1]
@@ -575,24 +608,24 @@ class AutoTagger:
                 artwork_data=artwork_data,
                 artwork_mime=artwork_mime,
             )
-            tm.write(path_obj, tag_data)
+            tag_writer.write(path_obj, tag_data)
         return True
 
     def _apply_single_match(
         self,
-        tm: TagManager,
+        tag_writer: TagManager,
         paths: list[str | Path],
-        raw: dict[str, Any],
+        match_payload: MatchPayload,
         artwork_data: bytes | None,
         artwork_mime: str,
     ) -> bool:
-        artist = str(raw.get("artist", "") or "")
-        album = str(raw.get("album", "") or "")
-        title = str(raw.get("title", "") or "")
-        year = self._coerce_int(raw.get("year", 0), 0)
-        genre = str(raw.get("genre", "") or "")
-        track = self._coerce_int(raw.get("track", 0), 0)
-        disc = self._coerce_int(raw.get("disc", 0), 0)
+        artist = str(match_payload.get("artist", "") or "")
+        album = str(match_payload.get("album", "") or "")
+        title = str(match_payload.get("title", "") or "")
+        year = self._coerce_int(match_payload.get("year", 0), 0)
+        genre = str(match_payload.get("genre", "") or "")
+        track = self._coerce_int(match_payload.get("track", 0), 0)
+        disc = self._coerce_int(match_payload.get("disc", 0), 0)
         tag_data = TagData(
             title=title,
             artist=artist,
@@ -606,7 +639,7 @@ class AutoTagger:
             artwork_mime=artwork_mime,
         )
         for path in paths:
-            tm.write(path, tag_data)
+            tag_writer.write(path, tag_data)
         return True
 
     @staticmethod
@@ -819,11 +852,16 @@ class AutoTagger:
                     expanded.append(https_url.replace("/front-500", "/front"))
         return cls._dedupe_urls(expanded)
 
-    def _call_with_retry(self, func, *args):
+    def _call_with_retry(
+        self,
+        operation: Callable[P, R],
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> R:
         last_error: Exception | None = None
         for attempt in range(3):
             try:
-                return func(*args)
+                return operation(*args, **kwargs)
             except Exception as exc:
                 last_error = exc
                 if attempt >= 2 or not self._is_transient_network_error(exc):
@@ -898,8 +936,8 @@ class AutoTagger:
     def _build_search_payload(
         candidates: list[MatchCandidate],
         source_errors: dict[str, str],
-    ) -> dict[str, Any]:
-        source_counts = {"MusicBrainz": 0, "Discogs": 0}
+    ) -> SearchDiagnostics:
+        source_counts: dict[str, int] = {"MusicBrainz": 0, "Discogs": 0}
         for candidate in candidates:
             if candidate.source in source_counts:
                 source_counts[candidate.source] += 1

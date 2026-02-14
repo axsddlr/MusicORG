@@ -3,13 +3,23 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, TypedDict
 
-from musicorg.core.autotagger import AutoTagger
+from musicorg.core.autotagger import AutoTagger, SearchDiagnostics
 from musicorg.workers.base_worker import BaseWorker
 
 if TYPE_CHECKING:
     from musicorg.core.autotagger import MatchCandidate
+
+
+SearchMode = Literal["album", "single"]
+
+
+class PreviewResult(TypedDict):
+    request_id: int
+    data: bytes
+    mime: str
+    message: str
 
 
 class ArtworkSearchWorker(BaseWorker):
@@ -22,7 +32,7 @@ class ArtworkSearchWorker(BaseWorker):
         artist_hint: str = "",
         album_hint: str = "",
         title_hint: str = "",
-        mode: str = "album",
+        mode: SearchMode = "album",
         discogs_token: str = "",
     ) -> None:
         super().__init__()
@@ -38,29 +48,32 @@ class ArtworkSearchWorker(BaseWorker):
         try:
             tagger = AutoTagger(discogs_token=self._discogs_token)
             self.progress.emit(0, 1, "Searching...")
+            search_result: SearchDiagnostics
             if self._mode == "album":
-                payload = tagger.search_album_with_diagnostics(
+                search_result = tagger.search_album_with_diagnostics(
                     self._paths,
                     artist_hint=self._artist_hint,
                     album_hint=self._album_hint,
                 )
             else:
                 if not self._paths:
-                    self.finished.emit({"candidates": [], "source_errors": {}, "source_counts": {}})
+                    self.finished.emit(
+                        {"candidates": [], "source_errors": {}, "source_counts": {}}
+                    )
                     return
-                payload = tagger.search_item_with_diagnostics(
+                search_result = tagger.search_item_with_diagnostics(
                     self._paths[0],
                     artist_hint=self._artist_hint,
                     title_hint=self._title_hint,
                 )
-            candidates = payload.get("candidates", [])
-            source_errors = payload.get("source_errors", {})
+            candidates = search_result.get("candidates", [])
+            source_errors = search_result.get("source_errors", {})
             if source_errors:
                 unavailable = ", ".join(f"{name} unavailable" for name in source_errors)
                 self.progress.emit(1, 1, f"Found {len(candidates)} candidates ({unavailable})")
             else:
                 self.progress.emit(1, 1, f"Found {len(candidates)} candidates")
-            self.finished.emit(payload)
+            self.finished.emit(search_result)
         except Exception as exc:
             self.error.emit(str(exc))
 
@@ -81,53 +94,59 @@ class ArtworkPreviewWorker(BaseWorker):
     def run(self) -> None:
         self.started.emit()
         try:
-            raw = getattr(self._match, "raw_match", None)
-            urls = []
-            if isinstance(raw, dict):
-                raw_urls = raw.get("artwork_urls", [])
-                if isinstance(raw_urls, list):
-                    urls = [str(url) for url in raw_urls if str(url).strip()]
-            if not urls:
-                self.finished.emit(
-                    {
-                        "request_id": self._request_id,
-                        "data": b"",
-                        "mime": "",
-                        "message": "No artwork URL available for this candidate",
-                    }
-                )
+            match_payload = getattr(self._match, "raw_match", None)
+            artwork_urls: list[str] = []
+            if isinstance(match_payload, dict):
+                raw_artwork_urls = match_payload.get("artwork_urls", [])
+                if isinstance(raw_artwork_urls, list):
+                    artwork_urls = [
+                        str(url).strip()
+                        for url in raw_artwork_urls
+                        if str(url).strip()
+                    ]
+            if not artwork_urls:
+                self.finished.emit(self._build_preview_result(
+                    message="No artwork URL available for this candidate",
+                ))
                 return
 
             self.progress.emit(0, 1, "Downloading artwork preview...")
-            expanded_urls = AutoTagger._expand_artwork_urls(urls)
-            artwork = AutoTagger._download_artwork_from_urls(urls)
+            expanded_urls = AutoTagger._expand_artwork_urls(artwork_urls)
+            artwork = AutoTagger._download_artwork_from_urls(artwork_urls)
             if self._is_cancelled:
                 self.cancelled.emit()
                 return
 
             if not artwork:
-                self.finished.emit(
-                    {
-                        "request_id": self._request_id,
-                        "data": b"",
-                        "mime": "",
-                        "message": (
-                            f"Could not download artwork preview "
-                            f"(tried {len(expanded_urls)} URL(s))"
-                        ),
-                    }
-                )
+                self.finished.emit(self._build_preview_result(
+                    message=(
+                        f"Could not download artwork preview "
+                        f"(tried {len(expanded_urls)} URL(s))"
+                    ),
+                ))
                 return
 
-            data, mime = artwork
+            image_data, image_mime = artwork
             self.progress.emit(1, 1, "Artwork preview ready")
             self.finished.emit(
-                {
-                    "request_id": self._request_id,
-                    "data": data,
-                    "mime": mime,
-                    "message": "",
-                }
+                self._build_preview_result(
+                    data=image_data,
+                    mime=image_mime,
+                )
             )
         except Exception as exc:
             self.error.emit(str(exc))
+
+    def _build_preview_result(
+        self,
+        *,
+        data: bytes = b"",
+        mime: str = "",
+        message: str = "",
+    ) -> PreviewResult:
+        return {
+            "request_id": self._request_id,
+            "data": data,
+            "mime": mime,
+            "message": message,
+        }

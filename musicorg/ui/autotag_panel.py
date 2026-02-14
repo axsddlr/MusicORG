@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import partial
 from pathlib import Path
+from typing import cast
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
@@ -17,7 +18,7 @@ from PySide6.QtCore import Qt
 from musicorg.core.autotagger import MatchCandidate
 from musicorg.ui.widgets.match_list import MatchList
 from musicorg.ui.widgets.progress_bar import ProgressIndicator
-from musicorg.workers.autotag_worker import ApplyMatchWorker, AutoTagWorker
+from musicorg.workers.autotag_worker import ApplyMatchWorker, AutoTagWorker, SearchMode
 
 
 class AutoTagPanel(QDialog):
@@ -30,7 +31,6 @@ class AutoTagPanel(QDialog):
         self.setWindowTitle("Auto-Tag")
         self.resize(750, 600)
         self._files: list[Path] = []
-        self._candidates: list[MatchCandidate] = []
         self._search_worker: AutoTagWorker | None = None
         self._search_thread: QThread | None = None
         self._search_in_progress = False
@@ -181,14 +181,14 @@ class AutoTagPanel(QDialog):
         if self._files:
             try:
                 from musicorg.core.tagger import TagManager
-                tm = TagManager()
-                tags = tm.read(self._files[0])
+                tag_reader = TagManager()
+                tags = tag_reader.read(self._files[0])
                 self._artist_edit.setText(tags.albumartist or tags.artist)
                 self._album_edit.setText(tags.album)
                 self._title_edit.setText(tags.title)
-            except Exception as e:
+            except Exception as exc:
                 self._progress.finish(
-                    f"Loaded files, but could not read tag hints: {e}"
+                    f"Loaded files, but could not read tag hints: {exc}"
                 )
         self._refresh_search_controls()
 
@@ -198,7 +198,7 @@ class AutoTagPanel(QDialog):
     def _start_search_single(self) -> None:
         self._do_search("single")
 
-    def _do_search(self, mode: str) -> None:
+    def _do_search(self, mode: SearchMode) -> None:
         if self._search_in_progress:
             return
 
@@ -223,7 +223,7 @@ class AutoTagPanel(QDialog):
         self._source_status_label.setText("Searching MusicBrainz and Discogs...")
         self._progress.start("Searching...")
 
-        worker = AutoTagWorker(
+        search_worker = AutoTagWorker(
             paths=self._files,
             artist_hint=artist_hint,
             album_hint=album_hint,
@@ -231,43 +231,27 @@ class AutoTagPanel(QDialog):
             mode=mode,
             discogs_token=self._discogs_token,
         )
-        thread = QThread()
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.progress.connect(
+        search_thread = QThread()
+        search_worker.moveToThread(search_thread)
+        search_thread.started.connect(search_worker.run)
+        search_worker.progress.connect(
             self._on_search_progress,
             Qt.ConnectionType.QueuedConnection,
         )
-        worker.finished.connect(self._on_search_done)
-        worker.error.connect(self._on_search_error)
-        worker.finished.connect(thread.quit)
-        worker.error.connect(thread.quit)
-        thread.finished.connect(partial(self._cleanup_search, worker, thread))
+        search_worker.finished.connect(self._on_search_done)
+        search_worker.error.connect(self._on_search_error)
+        search_worker.finished.connect(search_thread.quit)
+        search_worker.error.connect(search_thread.quit)
+        search_thread.finished.connect(
+            partial(self._cleanup_search, search_worker, search_thread)
+        )
 
-        self._search_worker = worker
-        self._search_thread = thread
-        thread.start()
+        self._search_worker = search_worker
+        self._search_thread = search_thread
+        search_thread.start()
 
     def _on_search_done(self, payload: object) -> None:
-        if isinstance(payload, dict):
-            candidates_obj = payload.get("candidates", [])
-            source_errors_obj = payload.get("source_errors", {})
-            source_counts_obj = payload.get("source_counts", {})
-            candidates = (
-                candidates_obj if isinstance(candidates_obj, list) else []
-            )
-            source_errors = (
-                source_errors_obj if isinstance(source_errors_obj, dict) else {}
-            )
-            source_counts = (
-                source_counts_obj if isinstance(source_counts_obj, dict) else {}
-            )
-        else:
-            candidates = payload if isinstance(payload, list) else []
-            source_errors = {}
-            source_counts = {}
-
-        self._candidates = candidates
+        candidates, source_errors, source_counts = self._coerce_search_payload(payload)
         self._match_list.match_model.set_candidates(candidates)
         self._search_in_progress = False
         self._refresh_search_controls()
@@ -283,12 +267,12 @@ class AutoTagPanel(QDialog):
     def _on_search_progress(self, current: int, total: int, message: str) -> None:
         self._progress.update_progress(current, total, message)
 
-    def _on_search_error(self, msg: str) -> None:
+    def _on_search_error(self, error_message: str) -> None:
         self._search_in_progress = False
         self._refresh_search_controls()
         self._source_status_label.setText("MusicBrainz: unavailable | Discogs: unavailable")
-        self._progress.finish(f"Error: {msg}")
-        QMessageBox.critical(self, "Search Error", msg)
+        self._progress.finish(f"Error: {error_message}")
+        QMessageBox.critical(self, "Search Error", error_message)
 
     def _refresh_search_controls(self) -> None:
         if self._search_in_progress:
@@ -311,18 +295,14 @@ class AutoTagPanel(QDialog):
 
     def _set_source_status(
         self,
-        source_counts: dict[str, object],
+        source_counts: dict[str, int],
         source_errors: dict[str, str],
         candidates: list[MatchCandidate] | None = None,
     ) -> None:
         source_names = ("MusicBrainz", "Discogs")
         counts: dict[str, int] = {name: 0 for name in source_names}
         for name in source_names:
-            raw = source_counts.get(name, 0)
-            try:
-                counts[name] = max(0, int(raw))
-            except (TypeError, ValueError):
-                counts[name] = 0
+            counts[name] = max(0, source_counts.get(name, 0))
         if not source_counts and candidates:
             for candidate in candidates:
                 if candidate.source in counts:
@@ -345,16 +325,32 @@ class AutoTagPanel(QDialog):
         # Show track details
         tracks = candidate.tracks
         self._track_table.setRowCount(len(tracks))
-        for i, t in enumerate(tracks):
-            self._track_table.setItem(i, 0, QTableWidgetItem(str(t.get("track", ""))))
-            self._track_table.setItem(i, 1, QTableWidgetItem(t.get("title", "")))
-            self._track_table.setItem(i, 2, QTableWidgetItem(t.get("artist", "")))
-            length = t.get("length", 0)
+        for row_index, track_row in enumerate(tracks):
+            self._track_table.setItem(
+                row_index,
+                0,
+                QTableWidgetItem(str(track_row.get("track", ""))),
+            )
+            self._track_table.setItem(
+                row_index,
+                1,
+                QTableWidgetItem(track_row.get("title", "")),
+            )
+            self._track_table.setItem(
+                row_index,
+                2,
+                QTableWidgetItem(track_row.get("artist", "")),
+            )
+            length = track_row.get("length", 0)
             if length:
                 mins, secs = divmod(int(length), 60)
-                self._track_table.setItem(i, 3, QTableWidgetItem(f"{mins}:{secs:02d}"))
+                self._track_table.setItem(
+                    row_index,
+                    3,
+                    QTableWidgetItem(f"{mins}:{secs:02d}"),
+                )
             else:
-                self._track_table.setItem(i, 3, QTableWidgetItem(""))
+                self._track_table.setItem(row_index, 3, QTableWidgetItem(""))
 
     def _apply_match(self) -> None:
         candidate = self._match_list.selected_candidate()
@@ -395,68 +391,105 @@ class AutoTagPanel(QDialog):
     def _on_apply_progress(self, current: int, total: int, message: str) -> None:
         self._progress.update_progress(current, total, message)
 
-    def _on_apply_error(self, msg: str) -> None:
-        self._progress.finish(f"Error: {msg}")
+    def _on_apply_error(self, error_message: str) -> None:
+        self._progress.finish(f"Error: {error_message}")
         self._apply_btn.setEnabled(True)
-        QMessageBox.critical(self, "Apply Error", msg)
+        QMessageBox.critical(self, "Apply Error", error_message)
 
-    def _cleanup_search(self, worker: AutoTagWorker, thread: QThread) -> None:
+    @staticmethod
+    def _coerce_search_payload(
+        payload: object,
+    ) -> tuple[list[MatchCandidate], dict[str, str], dict[str, int]]:
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, MatchCandidate)], {}, {}
+        if not isinstance(payload, dict):
+            return [], {}, {}
+        typed_payload = cast(dict[str, object], payload)
+        candidates_obj = typed_payload.get("candidates", [])
+        source_errors_obj = typed_payload.get("source_errors", {})
+        source_counts_obj = typed_payload.get("source_counts", {})
+
+        candidates = (
+            [item for item in candidates_obj if isinstance(item, MatchCandidate)]
+            if isinstance(candidates_obj, list)
+            else []
+        )
+        source_errors: dict[str, str] = {}
+        if isinstance(source_errors_obj, dict):
+            source_errors = {
+                str(source): str(error_message)
+                for source, error_message in source_errors_obj.items()
+            }
+        source_counts: dict[str, int] = {}
+        if isinstance(source_counts_obj, dict):
+            for source, value in source_counts_obj.items():
+                try:
+                    source_counts[str(source)] = max(0, int(value))
+                except (TypeError, ValueError):
+                    continue
+        return candidates, source_errors, source_counts
+
+    def _cleanup_search(
+        self,
+        search_worker: AutoTagWorker,
+        search_thread: QThread,
+    ) -> None:
         try:
-            worker.progress.disconnect(self._on_search_progress)
+            search_worker.progress.disconnect(self._on_search_progress)
         except (RuntimeError, TypeError):
             pass
         try:
-            worker.finished.disconnect(self._on_search_done)
+            search_worker.finished.disconnect(self._on_search_done)
         except (RuntimeError, TypeError):
             pass
         try:
-            worker.error.disconnect(self._on_search_error)
+            search_worker.error.disconnect(self._on_search_error)
         except (RuntimeError, TypeError):
             pass
         try:
-            worker.finished.disconnect(thread.quit)
+            search_worker.finished.disconnect(search_thread.quit)
         except (RuntimeError, TypeError):
             pass
         try:
-            worker.error.disconnect(thread.quit)
+            search_worker.error.disconnect(search_thread.quit)
         except (RuntimeError, TypeError):
             pass
-        worker.deleteLater()
-        thread.deleteLater()
-        if self._search_worker is worker:
+        search_worker.deleteLater()
+        search_thread.deleteLater()
+        if self._search_worker is search_worker:
             self._search_worker = None
-        if self._search_thread is thread:
+        if self._search_thread is search_thread:
             self._search_thread = None
 
     def _cleanup_apply(self) -> None:
-        worker = self._apply_worker
-        thread = self._apply_thread
-        if worker and thread:
+        apply_worker = self._apply_worker
+        apply_thread = self._apply_thread
+        if apply_worker and apply_thread:
             try:
-                worker.progress.disconnect(self._on_apply_progress)
+                apply_worker.progress.disconnect(self._on_apply_progress)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.finished.disconnect(self._on_apply_done)
+                apply_worker.finished.disconnect(self._on_apply_done)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.error.disconnect(self._on_apply_error)
+                apply_worker.error.disconnect(self._on_apply_error)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.finished.disconnect(thread.quit)
+                apply_worker.finished.disconnect(apply_thread.quit)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.error.disconnect(thread.quit)
+                apply_worker.error.disconnect(apply_thread.quit)
             except (RuntimeError, TypeError):
                 pass
-        if worker:
-            worker.deleteLater()
+        if apply_worker:
+            apply_worker.deleteLater()
             self._apply_worker = None
-        if thread:
-            thread.deleteLater()
+        if apply_thread:
+            apply_thread.deleteLater()
             self._apply_thread = None
 
     def shutdown(self, timeout_ms: int = 3000) -> None:

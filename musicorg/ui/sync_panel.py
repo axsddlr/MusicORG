@@ -30,8 +30,8 @@ class SyncPanel(QWidget):
         self._plan: SyncPlan | None = None
         self._plan_worker: SyncPlanWorker | None = None
         self._plan_thread: QThread | None = None
-        self._exec_worker: SyncExecuteWorker | None = None
-        self._exec_thread: QThread | None = None
+        self._sync_worker: SyncExecuteWorker | None = None
+        self._sync_thread: QThread | None = None
 
         self._setup_ui()
 
@@ -103,7 +103,7 @@ class SyncPanel(QWidget):
         if self._plan_thread and self._plan_thread.isRunning():
             QMessageBox.information(self, "Plan In Progress", "Sync planning is already running.")
             return
-        if self._exec_thread and self._exec_thread.isRunning():
+        if self._sync_thread and self._sync_thread.isRunning():
             QMessageBox.information(self, "Sync In Progress", "Wait for the current sync to finish.")
             return
 
@@ -156,10 +156,10 @@ class SyncPanel(QWidget):
     def _on_plan_progress(self, current: int, total: int, message: str) -> None:
         self._progress.update_progress(current, total, f"Scanning: {message}")
 
-    def _on_plan_error(self, msg: str) -> None:
+    def _on_plan_error(self, error_message: str) -> None:
         self._plan_btn.setEnabled(True)
-        self._progress.finish(f"Error: {msg}")
-        QMessageBox.critical(self, "Plan Error", msg)
+        self._progress.finish(f"Error: {error_message}")
+        QMessageBox.critical(self, "Plan Error", error_message)
 
     def _populate_plan_table(self) -> None:
         if not self._plan:
@@ -181,7 +181,7 @@ class SyncPanel(QWidget):
     def _start_sync(self) -> None:
         if not self._plan:
             return
-        if self._exec_thread and self._exec_thread.isRunning():
+        if self._sync_thread and self._sync_thread.isRunning():
             QMessageBox.information(self, "Sync In Progress", "A sync job is already running.")
             return
 
@@ -192,26 +192,26 @@ class SyncPanel(QWidget):
 
         path_format = self._format_edit.text().strip() or "$albumartist/$album/$track $title"
 
-        self._exec_worker = SyncExecuteWorker(self._plan, path_format)
-        self._exec_thread = QThread()
-        self._exec_worker.moveToThread(self._exec_thread)
-        self._exec_thread.started.connect(self._exec_worker.run)
-        self._exec_worker.progress.connect(
+        self._sync_worker = SyncExecuteWorker(self._plan, path_format)
+        self._sync_thread = QThread()
+        self._sync_worker.moveToThread(self._sync_thread)
+        self._sync_thread.started.connect(self._sync_worker.run)
+        self._sync_worker.progress.connect(
             self._on_sync_progress,
             Qt.ConnectionType.QueuedConnection,
         )
-        self._exec_worker.finished.connect(self._on_sync_done)
-        self._exec_worker.error.connect(self._on_sync_error)
-        self._exec_worker.cancelled.connect(self._on_sync_cancelled)
-        self._exec_worker.finished.connect(self._exec_thread.quit)
-        self._exec_worker.error.connect(self._exec_thread.quit)
-        self._exec_worker.cancelled.connect(self._exec_thread.quit)
-        self._exec_thread.finished.connect(self._cleanup_exec)
-        self._exec_thread.start()
+        self._sync_worker.finished.connect(self._on_sync_done)
+        self._sync_worker.error.connect(self._on_sync_error)
+        self._sync_worker.cancelled.connect(self._on_sync_cancelled)
+        self._sync_worker.finished.connect(self._sync_thread.quit)
+        self._sync_worker.error.connect(self._sync_thread.quit)
+        self._sync_worker.cancelled.connect(self._sync_thread.quit)
+        self._sync_thread.finished.connect(self._cleanup_sync)
+        self._sync_thread.start()
 
     def _cancel_sync(self) -> None:
-        if self._exec_worker:
-            self._exec_worker.cancel()
+        if self._sync_worker:
+            self._sync_worker.cancel()
 
     def _on_sync_done(self, plan: SyncPlan) -> None:
         self._plan = plan
@@ -232,11 +232,11 @@ class SyncPanel(QWidget):
     def _on_sync_progress(self, current: int, total: int, message: str) -> None:
         self._progress.update_progress(current, total, f"Copying: {message}")
 
-    def _on_sync_error(self, msg: str) -> None:
+    def _on_sync_error(self, error_message: str) -> None:
         self._plan_btn.setEnabled(True)
         self._cancel_btn.setEnabled(False)
-        self._progress.finish(f"Error: {msg}")
-        QMessageBox.critical(self, "Sync Error", msg)
+        self._progress.finish(f"Error: {error_message}")
+        QMessageBox.critical(self, "Sync Error", error_message)
 
     def _on_sync_cancelled(self) -> None:
         self._plan_btn.setEnabled(True)
@@ -244,85 +244,85 @@ class SyncPanel(QWidget):
         self._progress.finish("Sync cancelled")
 
     def _cleanup_plan(self) -> None:
-        worker = self._plan_worker
-        thread = self._plan_thread
-        if worker and thread:
+        plan_worker = self._plan_worker
+        plan_thread = self._plan_thread
+        if plan_worker and plan_thread:
             try:
-                worker.progress.disconnect(self._on_plan_progress)
+                plan_worker.progress.disconnect(self._on_plan_progress)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.finished.disconnect(self._on_plan_done)
+                plan_worker.finished.disconnect(self._on_plan_done)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.error.disconnect(self._on_plan_error)
+                plan_worker.error.disconnect(self._on_plan_error)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.finished.disconnect(thread.quit)
+                plan_worker.finished.disconnect(plan_thread.quit)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.error.disconnect(thread.quit)
+                plan_worker.error.disconnect(plan_thread.quit)
             except (RuntimeError, TypeError):
                 pass
-        if worker:
-            worker.deleteLater()
+        if plan_worker:
+            plan_worker.deleteLater()
             self._plan_worker = None
-        if thread:
-            thread.deleteLater()
+        if plan_thread:
+            plan_thread.deleteLater()
             self._plan_thread = None
 
-    def _cleanup_exec(self) -> None:
-        worker = self._exec_worker
-        thread = self._exec_thread
-        if worker and thread:
+    def _cleanup_sync(self) -> None:
+        sync_worker = self._sync_worker
+        sync_thread = self._sync_thread
+        if sync_worker and sync_thread:
             try:
-                worker.progress.disconnect(self._on_sync_progress)
+                sync_worker.progress.disconnect(self._on_sync_progress)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.finished.disconnect(self._on_sync_done)
+                sync_worker.finished.disconnect(self._on_sync_done)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.error.disconnect(self._on_sync_error)
+                sync_worker.error.disconnect(self._on_sync_error)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.cancelled.disconnect(self._on_sync_cancelled)
+                sync_worker.cancelled.disconnect(self._on_sync_cancelled)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.finished.disconnect(thread.quit)
+                sync_worker.finished.disconnect(sync_thread.quit)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.error.disconnect(thread.quit)
+                sync_worker.error.disconnect(sync_thread.quit)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.cancelled.disconnect(thread.quit)
+                sync_worker.cancelled.disconnect(sync_thread.quit)
             except (RuntimeError, TypeError):
                 pass
-        if worker:
-            worker.deleteLater()
-            self._exec_worker = None
-        if thread:
-            thread.deleteLater()
-            self._exec_thread = None
+        if sync_worker:
+            sync_worker.deleteLater()
+            self._sync_worker = None
+        if sync_thread:
+            sync_thread.deleteLater()
+            self._sync_thread = None
 
     def shutdown(self, timeout_ms: int = 3000) -> None:
         if self._plan_worker:
             self._plan_worker.cancel()
-        if self._exec_worker:
-            self._exec_worker.cancel()
+        if self._sync_worker:
+            self._sync_worker.cancel()
         if self._plan_thread and self._plan_thread.isRunning():
             self._plan_thread.quit()
             self._plan_thread.wait()
-        if self._exec_thread and self._exec_thread.isRunning():
-            self._exec_thread.quit()
-            self._exec_thread.wait()
+        if self._sync_thread and self._sync_thread.isRunning():
+            self._sync_thread.quit()
+            self._sync_thread.wait()
         self._cleanup_plan()
-        self._cleanup_exec()
+        self._cleanup_sync()

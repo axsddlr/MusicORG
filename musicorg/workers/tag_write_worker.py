@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TypedDict
 
 from musicorg.core.tag_cache import TagCache
-from musicorg.core.tagger import TagManager
+from musicorg.core.tagger import TagData, TagManager
 from musicorg.workers.base_worker import BaseWorker
 
-if TYPE_CHECKING:
-    from musicorg.core.tagger import TagData
+
+TagWriteInput = tuple[str | Path, TagData]
+TagWriteFailure = tuple[Path, str]
+
+
+class TagWriteSummary(TypedDict):
+    written: int
+    failed: list[TagWriteFailure]
+    total: int
 
 
 class TagWriteWorker(BaseWorker):
@@ -18,7 +25,7 @@ class TagWriteWorker(BaseWorker):
 
     def __init__(
         self,
-        items: list[tuple[str | Path, TagData]],
+        items: list[TagWriteInput],
         *,
         cache_db_path: str = "",
     ) -> None:
@@ -29,22 +36,22 @@ class TagWriteWorker(BaseWorker):
     def run(self) -> None:
         self.started.emit()
         try:
-            tm = TagManager()
-            total = len(self._items)
-            written = 0
+            tag_writer = TagManager()
+            total_items = len(self._items)
+            written_count = 0
             written_paths: list[Path] = []
-            failed: list[tuple[Path, str]] = []
-            for i, (path, tag_data) in enumerate(self._items):
+            failed_writes: list[TagWriteFailure] = []
+            for index, (path, tag_data) in enumerate(self._items):
                 if self._is_cancelled:
                     self.cancelled.emit()
                     return
                 try:
-                    tm.write(path, tag_data)
-                    written += 1
+                    tag_writer.write(path, tag_data)
+                    written_count += 1
                     written_paths.append(path)
-                except Exception as e:
-                    failed.append((path, str(e) or e.__class__.__name__))
-                self.progress.emit(i + 1, total, path.name)
+                except Exception as exc:
+                    failed_writes.append((path, str(exc) or exc.__class__.__name__))
+                self.progress.emit(index + 1, total_items, path.name)
 
             if self._cache_db_path and written_paths:
                 cache: TagCache | None = None
@@ -60,6 +67,21 @@ class TagWriteWorker(BaseWorker):
                             cache.close()
                         except Exception:
                             pass
-            self.finished.emit({"written": written, "failed": failed, "total": total})
-        except Exception as e:
-            self.error.emit(str(e))
+            self.finished.emit(
+                self._build_summary(
+                    written=written_count,
+                    failed=failed_writes,
+                    total=total_items,
+                )
+            )
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+    @staticmethod
+    def _build_summary(
+        *,
+        written: int,
+        failed: list[TagWriteFailure],
+        total: int,
+    ) -> TagWriteSummary:
+        return {"written": written, "failed": failed, "total": total}

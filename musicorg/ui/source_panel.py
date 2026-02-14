@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 from PySide6.QtCore import QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QPixmap
@@ -11,6 +12,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QPushButton, QSplitter, QVBoxLayout, QWidget,
 )
 
+from musicorg.core.tagger import TagData
 from musicorg.ui.models.file_table_model import FileTableRow
 from musicorg.ui.widgets.album_browser import AlbumBrowser
 from musicorg.ui.widgets.alphabet_bar import AlphabetBar
@@ -19,7 +21,12 @@ from musicorg.ui.widgets.dir_picker import DirPicker
 from musicorg.ui.widgets.progress_bar import ProgressIndicator
 from musicorg.ui.widgets.selection_manager import SelectionManager
 from musicorg.workers.scan_worker import ScanWorker
-from musicorg.workers.tag_read_worker import TagReadWorker
+from musicorg.workers.tag_read_worker import (
+    TagBatchEntry,
+    TagReadFailure,
+    TagReadFinishedPayload,
+    TagReadWorker,
+)
 
 
 class SourcePanel(QWidget):
@@ -32,8 +39,8 @@ class SourcePanel(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._worker: ScanWorker | None = None
-        self._thread: QThread | None = None
+        self._scan_worker: ScanWorker | None = None
+        self._scan_thread: QThread | None = None
         self._tag_worker: TagReadWorker | None = None
         self._tag_thread: QThread | None = None
         self._scanned_sizes: dict[Path, int] = {}
@@ -147,7 +154,7 @@ class SourcePanel(QWidget):
     def set_cache_db_path(self, path: str) -> None:
         self._cache_db_path = path
 
-    def _on_selection_changed(self, paths: list[Path]) -> None:
+    def _on_selection_changed(self, _selected_paths: list[Path]) -> None:
         self._update_selection_action_buttons()
 
     def _visible_paths(self) -> list[Path]:
@@ -210,20 +217,20 @@ class SourcePanel(QWidget):
         self._reset_library_view()
         self._progress.start("Scanning...")
 
-        self._worker = ScanWorker(path)
-        self._thread = QThread()
-        self._worker.moveToThread(self._thread)
-        self._thread.started.connect(self._worker.run)
-        self._worker.progress.connect(
+        self._scan_worker = ScanWorker(path)
+        self._scan_thread = QThread()
+        self._scan_worker.moveToThread(self._scan_thread)
+        self._scan_thread.started.connect(self._scan_worker.run)
+        self._scan_worker.progress.connect(
             self._on_scan_progress,
             Qt.ConnectionType.QueuedConnection,
         )
-        self._worker.finished.connect(self._on_scan_finished)
-        self._worker.error.connect(self._on_scan_error)
-        self._worker.finished.connect(self._thread.quit)
-        self._worker.error.connect(self._thread.quit)
-        self._thread.finished.connect(self._cleanup_scan_thread)
-        self._thread.start()
+        self._scan_worker.finished.connect(self._on_scan_finished)
+        self._scan_worker.error.connect(self._on_scan_error)
+        self._scan_worker.finished.connect(self._scan_thread.quit)
+        self._scan_worker.error.connect(self._scan_thread.quit)
+        self._scan_thread.finished.connect(self._cleanup_scan_thread)
+        self._scan_thread.start()
 
     def _on_scan_finished(self, audio_files: list) -> None:
         self._progress.update_progress(0, 0, "Reading tags...")
@@ -269,21 +276,18 @@ class SourcePanel(QWidget):
         self._tag_thread.finished.connect(self._cleanup_tag_thread)
         self._tag_thread.start()
 
-    def _on_scan_progress(self, current: int, total: int, message: str) -> None:
+    def _on_scan_progress(self, current: int, total: int, _message: str) -> None:
         self._progress.update_progress(current, total, f"Scanning... {current} files found")
 
-    def _on_tag_read_progress(self, current: int, total: int, message: str) -> None:
+    def _on_tag_read_progress(self, current: int, total: int, _message: str) -> None:
         self._progress.update_progress(current, total, f"Importing files {current}/{total}")
 
     def _on_tag_batch_ready(self, batch: object) -> None:
-        if not isinstance(batch, list):
+        batch_rows = self._coerce_tag_batch(batch)
+        if not batch_rows:
             return
         rows: list[FileTableRow] = []
-        for item in batch:
-            if not isinstance(item, (list, tuple)) or len(item) != 2:
-                continue
-            path, tag_data = item
-            path_obj = Path(path)
+        for path_obj, tag_data in batch_rows:
             rows.append(
                 FileTableRow(
                     path=path_obj,
@@ -301,25 +305,7 @@ class SourcePanel(QWidget):
             self._populate_artist_list()
 
     def _on_tags_read(self, payload: object) -> None:
-        failures: list[tuple[Path, str]] = []
-        cache_hits = 0
-        cache_misses = 0
-        if isinstance(payload, dict):
-            try:
-                cache_hits = int(payload.get("cache_hits", 0))
-            except (TypeError, ValueError):
-                cache_hits = 0
-            try:
-                cache_misses = int(payload.get("cache_misses", 0))
-            except (TypeError, ValueError):
-                cache_misses = 0
-            raw_failures = payload.get("failures", [])
-            if isinstance(raw_failures, list):
-                for item in raw_failures:
-                    if not isinstance(item, (list, tuple)) or len(item) != 2:
-                        continue
-                    path, msg = item
-                    failures.append((Path(path), str(msg)))
+        failures, cache_hits, cache_misses = self._coerce_tag_read_payload(payload)
 
         # _all_rows and _library_index were already built incrementally
         # by _on_tag_batch_ready; just do the final artwork strip + artist
@@ -358,6 +344,49 @@ class SourcePanel(QWidget):
         self._scan_in_progress = False
         self._last_scanned_path = self._scan_target_path
         self._run_pending_auto_scan()
+
+    @staticmethod
+    def _coerce_tag_batch(batch_payload: object) -> list[TagBatchEntry]:
+        if not isinstance(batch_payload, list):
+            return []
+        batch_rows: list[TagBatchEntry] = []
+        for item in batch_payload:
+            if not isinstance(item, (list, tuple)) or len(item) != 2:
+                continue
+            path_obj = Path(item[0])
+            tags = item[1] if isinstance(item[1], TagData) else None
+            batch_rows.append((path_obj, tags))
+        return batch_rows
+
+    @staticmethod
+    def _coerce_tag_read_payload(
+        payload: object,
+    ) -> tuple[list[TagReadFailure], int, int]:
+        if not isinstance(payload, dict):
+            return [], 0, 0
+        typed_payload = cast(TagReadFinishedPayload, payload)
+        cache_hits = SourcePanel._coerce_non_negative_int(
+            typed_payload.get("cache_hits", 0)
+        )
+        cache_misses = SourcePanel._coerce_non_negative_int(
+            typed_payload.get("cache_misses", 0)
+        )
+        failures: list[TagReadFailure] = []
+        raw_failures = typed_payload.get("failures", [])
+        if not isinstance(raw_failures, list):
+            return failures, cache_hits, cache_misses
+        for item in raw_failures:
+            if not isinstance(item, (list, tuple)) or len(item) != 2:
+                continue
+            failures.append((Path(item[0]), str(item[1])))
+        return failures, cache_hits, cache_misses
+
+    @staticmethod
+    def _coerce_non_negative_int(value: object) -> int:
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return 0
 
     def _build_library_index(self, rows: list[FileTableRow]) -> None:
         index: dict[str, dict[str, list[FileTableRow]]] = {}
@@ -549,11 +578,11 @@ class SourcePanel(QWidget):
         self._alphabet_bar.set_active_letter("")
         self._selection_manager.clear()
 
-    def _on_scan_error(self, error_msg: str) -> None:
-        self._progress.finish(f"Error: {error_msg}")
+    def _on_scan_error(self, error_message: str) -> None:
+        self._progress.finish(f"Error: {error_message}")
         self._scan_btn.setEnabled(True)
         self._scan_in_progress = False
-        QMessageBox.critical(self, "Scan Error", error_msg)
+        QMessageBox.critical(self, "Scan Error", error_message)
         self._run_pending_auto_scan()
 
     def _run_pending_auto_scan(self) -> None:
@@ -569,80 +598,80 @@ class SourcePanel(QWidget):
         self._start_scan(force=False, suppress_errors=True)
 
     def _cleanup_scan_thread(self) -> None:
-        worker = self._worker
-        thread = self._thread
-        if worker and thread:
+        scan_worker = self._scan_worker
+        scan_thread = self._scan_thread
+        if scan_worker and scan_thread:
             try:
-                worker.progress.disconnect(self._on_scan_progress)
+                scan_worker.progress.disconnect(self._on_scan_progress)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.finished.disconnect(self._on_scan_finished)
+                scan_worker.finished.disconnect(self._on_scan_finished)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.error.disconnect(self._on_scan_error)
+                scan_worker.error.disconnect(self._on_scan_error)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.finished.disconnect(thread.quit)
+                scan_worker.finished.disconnect(scan_thread.quit)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.error.disconnect(thread.quit)
+                scan_worker.error.disconnect(scan_thread.quit)
             except (RuntimeError, TypeError):
                 pass
-        if worker:
-            worker.deleteLater()
-            self._worker = None
-        if thread:
-            thread.deleteLater()
-            self._thread = None
+        if scan_worker:
+            scan_worker.deleteLater()
+            self._scan_worker = None
+        if scan_thread:
+            scan_thread.deleteLater()
+            self._scan_thread = None
 
     def _cleanup_tag_thread(self) -> None:
-        worker = self._tag_worker
-        thread = self._tag_thread
-        if worker and thread:
+        tag_read_worker = self._tag_worker
+        tag_read_thread = self._tag_thread
+        if tag_read_worker and tag_read_thread:
             try:
-                worker.progress.disconnect(self._on_tag_read_progress)
+                tag_read_worker.progress.disconnect(self._on_tag_read_progress)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.finished.disconnect(self._on_tags_read)
+                tag_read_worker.finished.disconnect(self._on_tags_read)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.batch_ready.disconnect(self._on_tag_batch_ready)
+                tag_read_worker.batch_ready.disconnect(self._on_tag_batch_ready)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.error.disconnect(self._on_scan_error)
+                tag_read_worker.error.disconnect(self._on_scan_error)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.finished.disconnect(thread.quit)
+                tag_read_worker.finished.disconnect(tag_read_thread.quit)
             except (RuntimeError, TypeError):
                 pass
             try:
-                worker.error.disconnect(thread.quit)
+                tag_read_worker.error.disconnect(tag_read_thread.quit)
             except (RuntimeError, TypeError):
                 pass
-        if worker:
-            worker.deleteLater()
+        if tag_read_worker:
+            tag_read_worker.deleteLater()
             self._tag_worker = None
-        if thread:
-            thread.deleteLater()
+        if tag_read_thread:
+            tag_read_thread.deleteLater()
             self._tag_thread = None
 
     def shutdown(self, timeout_ms: int = 3000) -> None:
         self._auto_scan_timer.stop()
-        if self._worker:
-            self._worker.cancel()
+        if self._scan_worker:
+            self._scan_worker.cancel()
         if self._tag_worker:
             self._tag_worker.cancel()
-        if self._thread and self._thread.isRunning():
-            self._thread.quit()
-            self._thread.wait()
+        if self._scan_thread and self._scan_thread.isRunning():
+            self._scan_thread.quit()
+            self._scan_thread.wait()
         if self._tag_thread and self._tag_thread.isRunning():
             self._tag_thread.quit()
             self._tag_thread.wait()

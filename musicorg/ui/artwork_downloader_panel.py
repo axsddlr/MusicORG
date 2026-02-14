@@ -26,7 +26,12 @@ from musicorg.core.autotagger import MatchCandidate
 from musicorg.core.tagger import TagManager
 from musicorg.ui.widgets.match_list import MatchList
 from musicorg.ui.widgets.progress_bar import ProgressIndicator
-from musicorg.workers.artwork_worker import ArtworkPreviewWorker, ArtworkSearchWorker
+from musicorg.workers.artwork_worker import (
+    ArtworkPreviewWorker,
+    ArtworkSearchWorker,
+    PreviewResult,
+    SearchMode,
+)
 
 
 class ArtworkDownloaderPanel(QDialog):
@@ -38,7 +43,6 @@ class ArtworkDownloaderPanel(QDialog):
         self.resize(760, 560)
 
         self._files: list[Path] = []
-        self._candidates: list[MatchCandidate] = []
         self._selected_artwork_data: bytes = b""
         self._selected_artwork_mime: str = ""
         self._preview_source_pixmap = QPixmap()
@@ -155,7 +159,6 @@ class ArtworkDownloaderPanel(QDialog):
         self._cancel_preview()
         self._files = list(paths)
         count = len(self._files)
-        self._candidates = []
         self._match_list.match_model.clear()
         self._set_source_status({}, {})
         self._clear_preview()
@@ -202,7 +205,7 @@ class ArtworkDownloaderPanel(QDialog):
     def _start_search_single(self) -> None:
         self._start_search("single")
 
-    def _start_search(self, mode: str) -> None:
+    def _start_search(self, mode: SearchMode) -> None:
         if self._search_in_progress:
             return
         if mode == "single" and len(self._files) != 1:
@@ -223,12 +226,11 @@ class ArtworkDownloaderPanel(QDialog):
         self._search_in_progress = True
         self._refresh_controls()
         self._match_list.match_model.clear()
-        self._candidates = []
         self._set_source_status({}, {})
         self._clear_preview("Searching providers...")
         self._progress.start("Searching...")
 
-        worker = ArtworkSearchWorker(
+        search_worker = ArtworkSearchWorker(
             paths=self._files,
             artist_hint=self._artist_edit.text().strip(),
             album_hint=self._album_edit.text().strip(),
@@ -236,42 +238,28 @@ class ArtworkDownloaderPanel(QDialog):
             mode=mode,
             discogs_token=self._discogs_token,
         )
-        thread = QThread()
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.progress.connect(
+        search_thread = QThread()
+        search_worker.moveToThread(search_thread)
+        search_thread.started.connect(search_worker.run)
+        search_worker.progress.connect(
             self._on_search_progress,
             Qt.ConnectionType.QueuedConnection,
         )
-        worker.finished.connect(self._on_search_done)
-        worker.error.connect(self._on_search_error)
-        worker.finished.connect(thread.quit)
-        worker.error.connect(thread.quit)
-        thread.finished.connect(partial(self._cleanup_search, worker, thread))
+        search_worker.finished.connect(self._on_search_done)
+        search_worker.error.connect(self._on_search_error)
+        search_worker.finished.connect(search_thread.quit)
+        search_worker.error.connect(search_thread.quit)
+        search_thread.finished.connect(partial(self._cleanup_search, search_worker, search_thread))
 
-        self._search_worker = worker
-        self._search_thread = thread
-        thread.start()
+        self._search_worker = search_worker
+        self._search_thread = search_thread
+        search_thread.start()
 
     def _on_search_progress(self, current: int, total: int, message: str) -> None:
         self._progress.update_progress(current, total, message)
 
     def _on_search_done(self, payload: object) -> None:
-        candidates: list[MatchCandidate] = []
-        source_errors: dict[str, str] = {}
-        source_counts: dict[str, object] = {}
-        if isinstance(payload, dict):
-            candidates_obj = payload.get("candidates", [])
-            source_errors_obj = payload.get("source_errors", {})
-            source_counts_obj = payload.get("source_counts", {})
-            if isinstance(candidates_obj, list):
-                candidates = candidates_obj
-            if isinstance(source_errors_obj, dict):
-                source_errors = source_errors_obj
-            if isinstance(source_counts_obj, dict):
-                source_counts = source_counts_obj
-
-        self._candidates = candidates
+        candidates, source_errors, source_counts = self._coerce_search_payload(payload)
         self._match_list.match_model.set_candidates(candidates)
         self._search_in_progress = False
         self._refresh_controls()
@@ -289,13 +277,13 @@ class ArtworkDownloaderPanel(QDialog):
         else:
             self._progress.finish(f"Found {len(candidates)} candidate(s)")
 
-    def _on_search_error(self, msg: str) -> None:
+    def _on_search_error(self, error_message: str) -> None:
         self._search_in_progress = False
         self._refresh_controls()
-        self._set_source_status({}, {"MusicBrainz": msg, "Discogs": msg})
+        self._set_source_status({}, {"MusicBrainz": error_message, "Discogs": error_message})
         self._clear_preview("Search failed")
-        self._progress.finish(f"Error: {msg}")
-        QMessageBox.critical(self, "Search Error", msg)
+        self._progress.finish(f"Error: {error_message}")
+        QMessageBox.critical(self, "Search Error", error_message)
 
     def _on_match_selected(self, row: int) -> None:
         candidate = self._match_list.match_model.get_candidate(row)
@@ -316,47 +304,46 @@ class ArtworkDownloaderPanel(QDialog):
         )
         self._progress.start("Downloading artwork preview...")
 
-        worker = ArtworkPreviewWorker(
+        preview_worker = ArtworkPreviewWorker(
             match=candidate,
             request_id=request_id,
         )
-        thread = QThread()
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.progress.connect(
+        preview_thread = QThread()
+        preview_worker.moveToThread(preview_thread)
+        preview_thread.started.connect(preview_worker.run)
+        preview_worker.progress.connect(
             self._on_preview_progress,
             Qt.ConnectionType.QueuedConnection,
         )
-        worker.finished.connect(self._on_preview_done)
-        worker.error.connect(self._on_preview_error)
-        worker.finished.connect(thread.quit)
-        worker.error.connect(thread.quit)
-        thread.finished.connect(partial(self._cleanup_preview, worker, thread))
+        preview_worker.finished.connect(self._on_preview_done)
+        preview_worker.error.connect(self._on_preview_error)
+        preview_worker.finished.connect(preview_thread.quit)
+        preview_worker.error.connect(preview_thread.quit)
+        preview_thread.finished.connect(
+            partial(self._cleanup_preview, preview_worker, preview_thread)
+        )
 
-        self._preview_worker = worker
-        self._preview_thread = thread
-        thread.start()
+        self._preview_worker = preview_worker
+        self._preview_thread = preview_thread
+        preview_thread.start()
 
     def _on_preview_progress(self, current: int, total: int, message: str) -> None:
         self._progress.update_progress(current, total, message)
 
     def _on_preview_done(self, payload: object) -> None:
-        if not isinstance(payload, dict):
+        preview_result = self._coerce_preview_result(payload)
+        if preview_result is None:
             self._clear_preview("No preview data available")
             self._progress.finish("No artwork preview available")
             return
 
-        try:
-            request_id = int(payload.get("request_id", -1))
-        except (TypeError, ValueError):
-            request_id = -1
+        request_id = preview_result["request_id"]
         if request_id != self._preview_request_id:
             return
 
-        data_obj = payload.get("data", b"")
-        data = data_obj if isinstance(data_obj, (bytes, bytearray)) else b""
-        mime = str(payload.get("mime", "") or "")
-        message = str(payload.get("message", "") or "")
+        data = preview_result["data"]
+        mime = preview_result["mime"]
+        message = preview_result["message"]
 
         if not data:
             self._clear_preview(message or "No artwork preview available")
@@ -379,9 +366,55 @@ class ArtworkDownloaderPanel(QDialog):
         self._preview_meta_label.setText(f"{mime_label} - {size_kb} KB")
         self._progress.finish("Artwork preview ready")
 
-    def _on_preview_error(self, msg: str) -> None:
+    def _on_preview_error(self, error_message: str) -> None:
         self._clear_preview("Preview download failed")
-        self._progress.finish(f"Preview error: {msg}")
+        self._progress.finish(f"Preview error: {error_message}")
+
+    @staticmethod
+    def _coerce_search_payload(
+        payload: object,
+    ) -> tuple[list[MatchCandidate], dict[str, str], dict[str, int]]:
+        if not isinstance(payload, dict):
+            return [], {}, {}
+
+        candidates_obj = payload.get("candidates", [])
+        source_errors_obj = payload.get("source_errors", {})
+        source_counts_obj = payload.get("source_counts", {})
+
+        candidates = [c for c in candidates_obj if isinstance(c, MatchCandidate)]
+        source_errors: dict[str, str] = {}
+        if isinstance(source_errors_obj, dict):
+            source_errors = {
+                str(source): str(message)
+                for source, message in source_errors_obj.items()
+            }
+        source_counts: dict[str, int] = {}
+        if isinstance(source_counts_obj, dict):
+            for source, count in source_counts_obj.items():
+                try:
+                    source_counts[str(source)] = max(0, int(count))
+                except (TypeError, ValueError):
+                    continue
+        return candidates, source_errors, source_counts
+
+    @staticmethod
+    def _coerce_preview_result(payload: object) -> PreviewResult | None:
+        if not isinstance(payload, dict):
+            return None
+        try:
+            request_id = int(payload.get("request_id", -1))
+        except (TypeError, ValueError):
+            request_id = -1
+        data_obj = payload.get("data", b"")
+        data = bytes(data_obj) if isinstance(data_obj, (bytes, bytearray)) else b""
+        mime = str(payload.get("mime", "") or "")
+        message = str(payload.get("message", "") or "")
+        return {
+            "request_id": request_id,
+            "data": data,
+            "mime": mime,
+            "message": message,
+        }
 
     @staticmethod
     def _format_source_errors(source_errors: dict[str, str]) -> str:
@@ -404,7 +437,7 @@ class ArtworkDownloaderPanel(QDialog):
 
     def _set_source_status(
         self,
-        source_counts: dict[str, object],
+        source_counts: dict[str, int],
         source_errors: dict[str, str],
         candidates: list[MatchCandidate] | None = None,
     ) -> None:
@@ -469,60 +502,68 @@ class ArtworkDownloaderPanel(QDialog):
             self._preview_thread.quit()
             self._preview_thread.wait()
 
-    def _cleanup_search(self, worker: ArtworkSearchWorker, thread: QThread) -> None:
+    def _cleanup_search(
+        self,
+        search_worker: ArtworkSearchWorker,
+        search_thread: QThread,
+    ) -> None:
         try:
-            worker.progress.disconnect(self._on_search_progress)
+            search_worker.progress.disconnect(self._on_search_progress)
         except (RuntimeError, TypeError):
             pass
         try:
-            worker.finished.disconnect(self._on_search_done)
+            search_worker.finished.disconnect(self._on_search_done)
         except (RuntimeError, TypeError):
             pass
         try:
-            worker.error.disconnect(self._on_search_error)
+            search_worker.error.disconnect(self._on_search_error)
         except (RuntimeError, TypeError):
             pass
         try:
-            worker.finished.disconnect(thread.quit)
+            search_worker.finished.disconnect(search_thread.quit)
         except (RuntimeError, TypeError):
             pass
         try:
-            worker.error.disconnect(thread.quit)
+            search_worker.error.disconnect(search_thread.quit)
         except (RuntimeError, TypeError):
             pass
-        worker.deleteLater()
-        thread.deleteLater()
-        if self._search_worker is worker:
+        search_worker.deleteLater()
+        search_thread.deleteLater()
+        if self._search_worker is search_worker:
             self._search_worker = None
-        if self._search_thread is thread:
+        if self._search_thread is search_thread:
             self._search_thread = None
 
-    def _cleanup_preview(self, worker: ArtworkPreviewWorker, thread: QThread) -> None:
+    def _cleanup_preview(
+        self,
+        preview_worker: ArtworkPreviewWorker,
+        preview_thread: QThread,
+    ) -> None:
         try:
-            worker.progress.disconnect(self._on_preview_progress)
+            preview_worker.progress.disconnect(self._on_preview_progress)
         except (RuntimeError, TypeError):
             pass
         try:
-            worker.finished.disconnect(self._on_preview_done)
+            preview_worker.finished.disconnect(self._on_preview_done)
         except (RuntimeError, TypeError):
             pass
         try:
-            worker.error.disconnect(self._on_preview_error)
+            preview_worker.error.disconnect(self._on_preview_error)
         except (RuntimeError, TypeError):
             pass
         try:
-            worker.finished.disconnect(thread.quit)
+            preview_worker.finished.disconnect(preview_thread.quit)
         except (RuntimeError, TypeError):
             pass
         try:
-            worker.error.disconnect(thread.quit)
+            preview_worker.error.disconnect(preview_thread.quit)
         except (RuntimeError, TypeError):
             pass
-        worker.deleteLater()
-        thread.deleteLater()
-        if self._preview_worker is worker:
+        preview_worker.deleteLater()
+        preview_thread.deleteLater()
+        if self._preview_worker is preview_worker:
             self._preview_worker = None
-        if self._preview_thread is thread:
+        if self._preview_thread is preview_thread:
             self._preview_thread = None
 
     def shutdown(self, timeout_ms: int = 3000) -> None:
