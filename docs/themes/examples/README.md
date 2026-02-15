@@ -17,3 +17,8 @@ Each example should include:
 Reference built-in examples in source:
 - `musicorg/ui/themes/builtin/musicorg-default/`
 - `musicorg/ui/themes/builtin/spotify-dark/`
+- `musicorg/ui/themes/builtin/nord-fjord/`
+- `musicorg/ui/themes/builtin/solar-flare/`
+- `musicorg/ui/themes/builtin/synthwave-dusk/`
+- `musicorg/ui/themes/builtin/emerald-forest/`
+- `musicorg/ui/themes/builtin/arctic-light/`
