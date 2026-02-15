@@ -1,0 +1,9 @@
+{
+  "schema_version": "1",
+  "theme_id": "spotify-dark",
+  "name": "Spotify Dark",
+  "version": "1.0.0",
+  "author": "MusicOrg",
+  "description": "Spotify-inspired dark green theme",
+  "target_app_min": "0.5.0"
+}

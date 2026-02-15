@@ -26,7 +26,11 @@ class SettingsDialog(QDialog):
         ("Off (preview only)", "none"),
     )
 
-    def __init__(self, settings: AppSettings, parent=None) -> None:
+    def __init__(
+        self,
+        settings: AppSettings,
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self._settings = settings
         self.setWindowTitle("Settings")
