@@ -113,17 +113,8 @@ class SourcePanel(QWidget):
         action_layout.setSpacing(8)
         self._selection_status_label = QLabel("0 selected")
         self._selection_status_label.setObjectName("StatusDetail")
-        self._open_editor_btn = QPushButton("Tag Editor")
-        self._open_editor_btn.clicked.connect(self._send_selected_to_editor)
-        self._open_autotag_btn = QPushButton("Auto-Tag")
-        self._open_autotag_btn.clicked.connect(self._send_selected_to_autotag)
-        self._open_artwork_btn = QPushButton("Artwork")
-        self._open_artwork_btn.clicked.connect(self._send_selected_to_artwork)
         action_layout.addWidget(self._selection_status_label)
         action_layout.addStretch()
-        action_layout.addWidget(self._open_editor_btn)
-        action_layout.addWidget(self._open_autotag_btn)
-        action_layout.addWidget(self._open_artwork_btn)
         layout.addWidget(action_container)
         self._selection_hint_label = QLabel("")
         self._selection_hint_label.setObjectName("StatusMuted")
@@ -226,9 +217,6 @@ class SourcePanel(QWidget):
         has_selection = bool(selected_count)
         self._select_all_btn.setEnabled(has_visible)
         self._deselect_all_btn.setEnabled(has_visible and has_selection)
-        self._open_editor_btn.setEnabled(has_selection)
-        self._open_autotag_btn.setEnabled(has_selection)
-        self._open_artwork_btn.setEnabled(has_selection)
         self._selection_status_label.setText(f"{selected_count} selected")
         self._emit_selection_stats()
 
@@ -239,21 +227,6 @@ class SourcePanel(QWidget):
 
     def _deselect_all_tracks(self) -> None:
         self._selection_manager.clear()
-
-    def _send_selected_to_editor(self) -> None:
-        paths = self._selection_manager.selected_paths()
-        if paths:
-            self.send_to_editor_requested.emit(paths)
-
-    def _send_selected_to_autotag(self) -> None:
-        paths = self._selection_manager.selected_paths()
-        if paths:
-            self.send_to_autotag_requested.emit(paths)
-
-    def _send_selected_to_artwork(self) -> None:
-        paths = self._selection_manager.selected_paths()
-        if paths:
-            self.send_to_artwork_requested.emit(paths)
 
     def _emit_selection_stats(self) -> None:
         self.selection_stats_changed.emit(
