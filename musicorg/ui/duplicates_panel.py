@@ -147,7 +147,13 @@ class DuplicatesPanel(QWidget):
         self._scan_thread.start()
 
     def _on_scan_progress(self, current: int, total: int, message: str) -> None:
-        self._progress.update_progress(current, total, message)
+        if total <= 0:
+            display_message = "Scanning for audio files..."
+        elif message.startswith("Analyzing duplicates"):
+            display_message = "Analyzing duplicates..."
+        else:
+            display_message = f"Importing files {current}/{total}"
+        self._progress.update_progress(current, total, display_message)
 
     def _on_scan_done(self, groups: list[DuplicateGroup]) -> None:
         self._groups = groups
@@ -267,8 +273,8 @@ class DuplicatesPanel(QWidget):
         self._delete_thread.finished.connect(self._cleanup_delete)
         self._delete_thread.start()
 
-    def _on_delete_progress(self, current: int, total: int, message: str) -> None:
-        self._progress.update_progress(current, total, message)
+    def _on_delete_progress(self, current: int, total: int, _message: str) -> None:
+        self._progress.update_progress(current, total, f"Deleting files {current}/{total}")
 
     def _on_delete_done(self, result: dict) -> None:
         deleted = result.get("deleted", 0)
