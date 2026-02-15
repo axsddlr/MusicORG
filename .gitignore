@@ -19,6 +19,7 @@ pip-wheel-metadata/
 
 # Virtual environments
 .venv/
+.venv-build/
 venv/
 env/
 ENV/
@@ -68,3 +69,7 @@ AGENTS.md
 
 # Local plugin runtime bundle (binary/vendor artifacts)
 musicorg/plugins/
+
+# Temporary PyInstaller spec generated in repo root during local builds
+/MusicOrg.spec
+/MusicOrg-OneFile.spec
