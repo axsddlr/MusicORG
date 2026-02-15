@@ -1,0 +1,104 @@
+name: Release Automation
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release-on-tag:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create release for tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          notes_file="RELEASE_NOTES_v${version}.md"
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release already exists for $tag"
+            exit 0
+          fi
+
+          if [[ -f "$notes_file" ]]; then
+            gh release create "$tag" --title "$tag" --notes-file "$notes_file"
+          else
+            gh release create "$tag" --title "$tag" --generate-notes
+          fi
+
+  release-on-version-commit:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect version change
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_pyproject="$(grep -Po '^version\s*=\s*"\K[0-9]+\.[0-9]+\.[0-9]+' pyproject.toml | head -n1)"
+          current_init="$(grep -Po '^__version__\s*=\s*"\K[0-9]+\.[0-9]+\.[0-9]+' musicorg/__init__.py | head -n1)"
+
+          if [[ "$current_pyproject" != "$current_init" ]]; then
+            echo "Version mismatch: pyproject=$current_pyproject init=$current_init"
+            exit 1
+          fi
+
+          previous_pyproject="$(git show HEAD~1:pyproject.toml 2>/dev/null | grep -Po '^version\s*=\s*"\K[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
+          if [[ "$current_pyproject" == "$previous_pyproject" ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "version=$current_pyproject" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "version=$current_pyproject" >> "$GITHUB_OUTPUT"
+
+      - name: Tag and release bumped version
+        if: steps.detect.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.detect.outputs.version }}"
+          tag="v${version}"
+          notes_file="RELEASE_NOTES_v${version}.md"
+
+          if ! git rev-parse "$tag" >/dev/null 2>&1; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "$tag" -m "Release $tag"
+            git push origin "$tag"
+          fi
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release already exists for $tag"
+            exit 0
+          fi
+
+          if [[ -f "$notes_file" ]]; then
+            gh release create "$tag" --title "$tag" --notes-file "$notes_file"
+          else
+            gh release create "$tag" --title "$tag" --generate-notes
+          fi
+
