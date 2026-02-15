@@ -63,3 +63,7 @@ Thumbs.db
 # Local tooling state
 .claude/
 *.png
+AGENTS.md
+
+# Local plugin runtime bundle (binary/vendor artifacts)
+musicorg/plugins/
