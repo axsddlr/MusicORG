@@ -25,6 +25,7 @@ from musicorg.ui.shortcuts_dialog import ShortcutsDialog
 from musicorg.ui.source_panel import SourcePanel
 from musicorg.ui.sync_panel import SyncPanel
 from musicorg.ui.tag_editor_panel import TagEditorPanel
+from musicorg.ui.theme_dialog import ThemeDialog
 from musicorg.ui.widgets.artwork_backdrop import ArtworkBackdrop
 from musicorg.ui.widgets.sidebar import SidebarNav
 from musicorg.ui.widgets.status_strip import StatusStrip
@@ -163,6 +164,9 @@ class MainWindow(QMainWindow):
             handler=self._open_settings,
         )
         settings_menu.addAction(prefs_action)
+        theme_action = QAction("&Themes...", self)
+        theme_action.triggered.connect(self._open_themes)
+        settings_menu.addAction(theme_action)
 
         # Tools menu
         tools_menu = menubar.addMenu("&Tools")
@@ -273,12 +277,10 @@ class MainWindow(QMainWindow):
         self._send_to_artwork(selected_paths)
 
     def _open_settings(self) -> None:
-        dialog = SettingsDialog(self._settings, theme_service=self._theme_service, parent=self)
+        dialog = SettingsDialog(self._settings, self)
         if dialog.exec():
             self._autotag_panel.set_discogs_token(self._settings.discogs_token)
             self._artwork_downloader_panel.set_discogs_token(self._settings.discogs_token)
-            if self._theme_service is not None:
-                _ok, _message = self._theme_service.apply_theme(self._settings.theme_id, persist=True)
             # Re-apply settings
             if self._settings.source_dir:
                 self._source_panel.set_source_dir(self._settings.source_dir)
@@ -292,6 +294,18 @@ class MainWindow(QMainWindow):
             )
             self._backdrop.set_opacity(self._settings.backdrop_opacity)
             self._status_strip.show_message("Settings updated")
+
+    def _open_themes(self) -> None:
+        if self._theme_service is None:
+            self._status_strip.show_message("Theme service is not available", 2500)
+            return
+        dialog = ThemeDialog(self._settings, self._theme_service, self)
+        if dialog.exec():
+            ok, message = self._theme_service.apply_theme(self._settings.theme_id, persist=True)
+            if ok:
+                self._status_strip.show_message(message, 2600)
+            else:
+                self._status_strip.show_message(message, 3200)
 
     def _show_about(self) -> None:
         from PySide6.QtWidgets import QMessageBox
