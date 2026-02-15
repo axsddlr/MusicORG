@@ -24,7 +24,8 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          pip install . pyinstaller==6.19.0
+          pip install --no-deps .
+          pip install pyinstaller==6.19.0 PySide6-Essentials==6.10.2 musicbrainzngs>=0.7.1 python3-discogs-client>=2.3.15 mutagen>=1.47.0 send2trash>=1.8.0
 
       - name: Build executable
         shell: pwsh
@@ -35,6 +36,14 @@ jobs:
             --hidden-import musicbrainzngs `
             --hidden-import discogs_client `
             --hidden-import send2trash `
+            --exclude-module PySide6.QtQml `
+            --exclude-module PySide6.QtQmlModels `
+            --exclude-module PySide6.QtQmlWorkerScript `
+            --exclude-module PySide6.QtQuick `
+            --exclude-module PySide6.QtQuickControls2 `
+            --exclude-module PySide6.QtQuickWidgets `
+            --exclude-module PySide6.QtPdf `
+            --exclude-module PySide6.QtPdfWidgets `
             --add-data "musicorg/ui/assets;musicorg/ui/assets" `
             --add-data "musicorg/ui/themes/builtin;musicorg/ui/themes/builtin" `
             musicorg/__main__.py
