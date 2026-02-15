@@ -19,11 +19,15 @@ MusicOrg is a desktop workflow for:
 
 ## Current Features
 - Source browser with artist filter, alphabet jump, album cards, and artwork backdrop
-- Tag Editor dialog for single/multi-file tag writes
+- Windows-style selection behavior (Ctrl toggle, Shift range, Ctrl+Shift additive range)
+- Configurable album artwork click behavior (single click, double click, or off)
+- Tag Editor dialog for single-file and bulk changed-field writes
+- Tag Editor artwork preview showing current embedded cover or newly selected replacement
 - Auto-Tag dialog with provider diagnostics and match application
-- Artwork Downloader dialog with candidate search and preview
+- Artwork Downloader dialog with candidate search, preview, and apply to selected files
 - Duplicate finder with keep/delete grouping logic
 - Sync planner/executor with tag-based destination paths
+- In-app Keyboard Shortcuts reference dialog (Help menu)
 - Background workers for scan/read/write/search/sync tasks
 - Tag cache for faster repeat scans
 
@@ -56,16 +60,23 @@ musicorg
 ## Quick Workflow
 1. Open **Source** and select your library directory.
 2. Click **Scan**.
-3. Right-click tracks/albums to open:
+3. Build your selection:
+   - `Ctrl + Left Click` toggles tracks
+   - `Shift + Left Click` selects ranges
+   - Album artwork click behavior follows **Settings > Preferences**
+4. Right-click tracks/albums to open:
    - `Tag Editor`
    - `Auto-Tag`
    - `Artwork Downloader`
-4. Use **Sync** to plan and copy files to a destination structure.
-5. Use **Duplicates** to review duplicate groups.
+5. In **Tag Editor**, use `Save` for one file or `Apply to Selected` for bulk edits.
+6. Use **Sync** to plan and copy files to a destination structure.
+7. Use **Duplicates** to review duplicate groups.
 
 ## Configuration
 - App settings are stored via `QSettings`.
 - Discogs token can be configured in **Settings > Preferences**.
+- Artwork click selection behavior can be configured in **Settings > Preferences**.
+- View keyboard behavior and app shortcuts in **Help > Keyboard Shortcuts**.
 - Tag cache DB path is managed by the app under user app data.
 
 ## Testing
@@ -87,4 +98,4 @@ musicorg/
 ## Notes
 - Supported audio formats: `.mp3`, `.flac`
 - Sync is non-destructive copy (source files are not moved/deleted)
-- Artwork Downloader apply action is currently planned for a following phase
+- Tools menu actions are enabled only when at least one file is selected
