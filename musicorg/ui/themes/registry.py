@@ -7,6 +7,8 @@ from pathlib import Path
 from musicorg.ui.themes.loader import load_theme_package
 from musicorg.ui.themes.models import ThemePackage, ThemeSummary, ThemeValidationError
 
+_MAX_THEME_DIR_CANDIDATES = 512
+
 
 class ThemeRegistry:
     """Loads theme packages from builtin and user directories."""
@@ -24,6 +26,9 @@ class ThemeRegistry:
     @property
     def user_root(self) -> Path:
         return self._user_root
+
+    def set_user_root(self, path: Path) -> None:
+        self._user_root = path
 
     def reload(self) -> None:
         self._themes = {}
@@ -57,10 +62,23 @@ class ThemeRegistry:
         if not root.exists():
             return
         try:
-            candidates = sorted(path for path in root.iterdir() if path.is_dir())
+            all_dirs = sorted(path for path in root.iterdir() if path.is_dir())
         except OSError as exc:
             self._load_errors.append(f"Failed to list themes in {root}: {exc}")
             return
+
+        candidates: list[Path] = []
+        for path in all_dirs:
+            if path.is_symlink():
+                self._load_errors.append(f"Skipping symlink theme directory: {path}")
+                continue
+            candidates.append(path)
+        if len(candidates) > _MAX_THEME_DIR_CANDIDATES:
+            self._load_errors.append(
+                f"Theme directory limit exceeded in {root}; "
+                f"only first {_MAX_THEME_DIR_CANDIDATES} folders were scanned."
+            )
+            candidates = candidates[:_MAX_THEME_DIR_CANDIDATES]
 
         for theme_dir in candidates:
             try:

@@ -6,12 +6,15 @@ Check:
 - `manifest.json` exists and includes required fields
 - `tokens.json` exists and includes all required token keys
 - JSON syntax is valid (no trailing commas, proper quotes)
+- You clicked `Reload Themes` in `Settings > Themes...`
 
 ## Theme Appears But Cannot Be Applied
 Likely causes:
 - One or more token color values are invalid
 - Unsupported schema version in `manifest.json`
 - Invalid values in `fonts.json`
+- Unknown JSON keys in manifest/tokens/fonts
+- `overrides.qss` contains blocked directives (`@import`, `url(...)`)
 
 Expected behavior:
 - MusicOrg rejects invalid theme and keeps the previous valid theme.
@@ -39,7 +42,7 @@ Expected behavior:
 ## How to Reset Quickly
 1. Move problematic theme folder out of user themes path.
 2. Reopen app.
-3. Select default theme in settings.
+3. Open `Settings > Themes...` and select default theme.
 4. Reintroduce fixed theme files and reload.
 
 ## Before Reporting a Bug

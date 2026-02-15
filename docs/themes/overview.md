@@ -1,5 +1,16 @@
 # MusicOrg Themes Overview
 
+## Plug-And-Play Summary
+To use a custom theme:
+1. Open `Settings > Themes... > Open Themes Folder`.
+2. Drop a theme folder in that directory.
+3. Click `Reload Themes`.
+4. Select the theme and click `OK`.
+
+Minimum required files are only:
+- `manifest.json`
+- `tokens.json`
+
 ## What Themes Can Change
 MusicOrg themes currently support:
 - Color tokens used across app UI components
@@ -15,12 +26,13 @@ MusicOrg themes currently support:
 
 ## Theme Sources
 - Built-in themes are shipped with MusicOrg.
-- User themes are loaded from the user themes directory:
-  - Windows: `%APPDATA%/musicorg/themes`
+- User themes are loaded from:
+  - default: `%APPDATA%/musicorg/themes`
+  - or a custom directory set in `Settings > Themes...`
 
 ## Selection and Apply Flow
 1. MusicOrg scans built-in and user themes.
-2. Valid themes appear in the settings theme picker.
+2. Valid themes appear in `Settings > Themes...`.
 3. Selecting a theme compiles QSS from defaults + theme tokens.
 4. Theme applies to the running app.
 5. Selection is saved in settings and restored on next launch.
@@ -43,4 +55,8 @@ my-theme/
   assets/               # optional
 ```
 
-For detailed fields, see `docs/themes/spec-v1.md`.
+For detailed fields, see:
+- `docs/themes/spec-v1.md`
+- `docs/themes/quickstart.md`
+- `docs/themes/reference-tokens.md`
+- `docs/themes/template-files.md`

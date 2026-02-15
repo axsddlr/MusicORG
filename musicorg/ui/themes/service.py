@@ -34,6 +34,9 @@ class ThemeService(QObject):
     def user_themes_dir(self) -> Path:
         return self._registry.user_root
 
+    def set_user_themes_dir(self, path: Path) -> None:
+        self._registry.set_user_root(path)
+
     def reload_themes(self) -> list[str]:
         self._registry.reload()
         return self._registry.load_errors()

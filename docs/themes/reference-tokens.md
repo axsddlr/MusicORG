@@ -1,33 +1,55 @@
 # Theme Token Reference
 
-## Token Categories
+Use this file as your "what does each token change?" reference.
 
-## Core Surfaces
-- `canvas`: app background behind primary surfaces
-- `surface_0`: base panel surface
-- `surface_1`: raised panel rows/cards
-- `surface_2`: hover/selected container surface
-- `surface_3`: stronger selection/input highlight surface
+## Token Effects
+| Token | Main UI Impact | Examples |
+|---|---|---|
+| `canvas` | App-level background color | Main window background, menu bar base, status strip base |
+| `surface_0` | Primary surface color | Input controls, menus, list/table base, album cover background |
+| `surface_1` | Secondary raised surface | Buttons, cards, alternating rows, hover backgrounds |
+| `surface_2` | Interactive highlight surface | Selected rows, focused nav items, hover states |
+| `surface_3` | Stronger input selection color | Text selection background in editable fields |
+| `line_soft` | Standard border/separator color | Control borders, card borders, split lines |
+| `line_strong` | Stronger hover/active border color | Album card hover border, scrollbar hover handle |
+| `text_primary` | Primary readable text color | Main labels, titles, body text |
+| `text_muted` | Secondary metadata text color | Sub-labels, headers, durations, status details |
+| `text_dim` | De-emphasized/disabled text color | Disabled button text, muted status notes |
+| `accent` | Primary action/selection color | Accent buttons, active nav/selection bars, progress chunks |
+| `accent_hover` | Hover state for accent elements | Accent button hover, selected badge foreground |
+| `accent_press` | Pressed state for accent elements | Accent button pressed |
+| `accent_subtle` | Muted accent background | Accent disabled background, selected badge background |
+| `focus_ring` | Keyboard focus indicator color | Focus borders on inputs/buttons, focused row edge |
+| `danger` | Reserved status token (required, currently not heavily used in QSS) | Future destructive/error visuals |
+| `success` | Reserved status token (required, currently not heavily used in QSS) | Future success visuals |
 
-## Borders and Lines
-- `line_soft`: subtle borders and separators
-- `line_strong`: stronger hover or focused edges
+## Token Groups
+## Layout and Depth
+- `canvas`
+- `surface_0`
+- `surface_1`
+- `surface_2`
+- `surface_3`
 
-## Text
-- `text_primary`: default readable text
-- `text_muted`: secondary labels and metadata
-- `text_dim`: disabled/de-emphasized text
+## Structure
+- `line_soft`
+- `line_strong`
 
-## Accent and Interaction
-- `accent`: primary action color
-- `accent_hover`: hover state for accent elements
-- `accent_press`: pressed state for accent elements
-- `accent_subtle`: muted accent background for badges and disabled accents
-- `focus_ring`: keyboard focus outline color
+## Typography
+- `text_primary`
+- `text_muted`
+- `text_dim`
+
+## Interaction
+- `accent`
+- `accent_hover`
+- `accent_press`
+- `accent_subtle`
+- `focus_ring`
 
 ## Status
-- `danger`: destructive or error indicators
-- `success`: success indicators and positive states
+- `danger`
+- `success`
 
 ## Accessibility Guidance
 - Keep `text_primary` high contrast against `surface_0`.

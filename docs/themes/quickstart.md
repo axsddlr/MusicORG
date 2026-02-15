@@ -1,16 +1,25 @@
 # Quickstart: Create Your First MusicOrg Theme
 
-## 1. Locate Theme Folder
-Create a new folder inside:
-- Windows: `%APPDATA%/musicorg/themes`
+## 1. Open Your Themes Folder
+In the app:
+1. Go to `Settings > Themes...`
+2. Click `Open Themes Folder`
+3. Optional: set a custom themes folder first if you do not want to use `%APPDATA%/musicorg/themes`
 
 Example:
+```text
+%APPDATA%/musicorg/themes
+```
+
+## 2. Create a Theme Folder
+Create a folder in that path, for example:
+
 ```text
 %APPDATA%/musicorg/themes/my-first-theme/
 ```
 
-## 2. Add Required Files
-Create these files in your theme folder:
+## 3. Add Required Files
+Create these files in `my-first-theme/`:
 - `manifest.json`
 - `tokens.json`
 
@@ -19,7 +28,7 @@ Optional:
 - `overrides.qss`
 - `preview.png`
 
-## 3. Add `manifest.json`
+## 4. Add `manifest.json`
 ```json
 {
   "schema_version": "1",
@@ -32,7 +41,7 @@ Optional:
 }
 ```
 
-## 4. Add `tokens.json`
+## 5. Add `tokens.json`
 Start from this baseline:
 ```json
 {
@@ -58,14 +67,14 @@ Start from this baseline:
 
 Change colors gradually, then save.
 
-## 5. Reload and Apply
-In MusicOrg (planned settings flow):
-1. Open `Settings > Preferences`
+## 6. Reload and Apply
+In MusicOrg:
+1. Open `Settings > Themes...`
 2. Click `Reload Themes`
-3. Select your theme in the theme dropdown
-4. Apply and verify all panels
+3. Select `My First Theme`
+4. Click `OK`
 
-## 6. Optional Font Overrides
+## 7. Optional Font Overrides
 Add `fonts.json`:
 ```json
 {
@@ -75,7 +84,14 @@ Add `fonts.json`:
 }
 ```
 
-## 7. Troubleshooting
+## 8. Plug-And-Play Checklist
+- Folder is inside `%APPDATA%/musicorg/themes`
+- `manifest.json` and `tokens.json` exist
+- `schema_version` is `"1"`
+- `theme_id` is lowercase with dashes only
+- All required token keys are present
+
+## 9. Troubleshooting
 - Theme not listed: check JSON validity and required fields.
 - App falls back to default: one or more values failed validation.
 - Text hard to read: increase contrast between surfaces and text tokens.

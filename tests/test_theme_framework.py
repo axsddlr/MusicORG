@@ -87,3 +87,52 @@ def test_registry_rejects_invalid_theme_id(tmp_path: Path) -> None:
 
     assert registry.get_theme("Bad Theme") is None
     assert any("theme_id must match pattern" in msg for msg in registry.load_errors())
+
+
+def test_load_theme_rejects_unknown_token_key(tmp_path: Path) -> None:
+    theme_dir = tmp_path / "unknown-token"
+    _write_json(theme_dir / "manifest.json", _base_manifest("unknown-token"))
+    tokens = _base_tokens()
+    tokens["evil_key"] = "#000000"
+    _write_json(theme_dir / "tokens.json", tokens)
+
+    with pytest.raises(ThemeValidationError):
+        load_theme_package(theme_dir)
+
+
+def test_load_theme_rejects_manifest_unknown_key(tmp_path: Path) -> None:
+    theme_dir = tmp_path / "unknown-manifest"
+    manifest = _base_manifest("unknown-manifest")
+    manifest["sql"] = "DROP TABLE themes"
+    _write_json(theme_dir / "manifest.json", manifest)
+    _write_json(theme_dir / "tokens.json", _base_tokens())
+
+    with pytest.raises(ThemeValidationError):
+        load_theme_package(theme_dir)
+
+
+def test_load_theme_rejects_overrides_import_or_url(tmp_path: Path) -> None:
+    theme_dir = tmp_path / "bad-overrides"
+    _write_theme_dir(theme_dir, "bad-overrides")
+    (theme_dir / "overrides.qss").write_text(
+        "@import \"http://example.com/evil.qss\";\nQLabel { color: #fff; }",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ThemeValidationError):
+        load_theme_package(theme_dir)
+
+
+def test_load_theme_rejects_manifest_field_length_and_newlines(tmp_path: Path) -> None:
+    theme_dir = tmp_path / "bad-manifest"
+    manifest = _base_manifest("bad-manifest")
+    manifest["name"] = "A" * 200
+    _write_json(theme_dir / "manifest.json", manifest)
+    _write_json(theme_dir / "tokens.json", _base_tokens())
+    with pytest.raises(ThemeValidationError):
+        load_theme_package(theme_dir)
+
+    manifest["name"] = "bad\nname"
+    _write_json(theme_dir / "manifest.json", manifest)
+    with pytest.raises(ThemeValidationError):
+        load_theme_package(theme_dir)

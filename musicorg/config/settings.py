@@ -93,6 +93,16 @@ class AppSettings:
         cleaned = (value or "").strip() or "musicorg-default"
         self._qs.setValue("ui/theme_last_known_good_id", cleaned)
 
+    @property
+    def theme_custom_dir(self) -> str:
+        raw = self._qs.value("ui/theme_custom_dir", "", type=str)
+        return (raw or "").strip()
+
+    @theme_custom_dir.setter
+    def theme_custom_dir(self, value: str) -> None:
+        cleaned = (value or "").strip()
+        self._qs.setValue("ui/theme_custom_dir", cleaned)
+
     # -- album artwork selection mode --
 
     @property
@@ -154,10 +164,22 @@ class AppSettings:
         return path
 
     @property
-    def themes_dir(self) -> Path:
+    def default_themes_dir(self) -> Path:
         path = self.app_data_dir / "themes"
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    @property
+    def themes_dir(self) -> Path:
+        custom = self.theme_custom_dir
+        if not custom:
+            return self.default_themes_dir
+        try:
+            path = Path(custom).expanduser()
+            path.mkdir(parents=True, exist_ok=True)
+            return path
+        except OSError:
+            return self.default_themes_dir
 
     @staticmethod
     def _app_data_dir() -> Path:
