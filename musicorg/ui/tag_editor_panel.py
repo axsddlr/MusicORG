@@ -1,4 +1,4 @@
-"""Tab 2: View/edit ID3 tags per file."""
+"""Dialog for viewing/editing tags for selected files."""
 
 from __future__ import annotations
 
@@ -7,7 +7,14 @@ from typing import cast
 
 from PySide6.QtCore import QThread, Qt
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget,
+    QApplication,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
 )
 
 from musicorg.core.tag_cache import TagCache
@@ -20,12 +27,37 @@ from musicorg.workers.tag_write_worker import TagWriteFailure, TagWriteSummary, 
 class TagEditorPanel(QDialog):
     """Dialog for viewing and editing ID3 tags for selected files."""
 
+    _SCALAR_FIELDS: tuple[str, ...] = (
+        "title",
+        "artist",
+        "album",
+        "albumartist",
+        "track",
+        "disc",
+        "year",
+        "genre",
+        "composer",
+    )
+    _FIELD_LABELS = {
+        "title": "Title",
+        "artist": "Artist",
+        "album": "Album",
+        "albumartist": "Album Artist",
+        "track": "Track #",
+        "disc": "Disc #",
+        "year": "Year",
+        "genre": "Genre",
+        "composer": "Composer",
+    }
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Tag Editor")
         self.resize(700, 550)
         self._files: list[Path] = []
         self._current_index: int = -1
+        self._bulk_mode = False
+        self._bulk_baseline_tags: TagData | None = None
         self._original_tags: TagData | None = None
         self._tag_manager = TagManager()
         self._cache_db_path = ""
@@ -37,7 +69,6 @@ class TagEditorPanel(QDialog):
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
 
-        # Navigation
         nav_layout = QHBoxLayout()
         self._prev_btn = QPushButton("< Prev")
         self._prev_btn.clicked.connect(self._prev_file)
@@ -52,12 +83,15 @@ class TagEditorPanel(QDialog):
         nav_layout.addWidget(self._next_btn)
         layout.addLayout(nav_layout)
 
-        # Tag form
+        self._mode_hint_label = QLabel("")
+        self._mode_hint_label.setObjectName("StatusMuted")
+        self._mode_hint_label.setWordWrap(True)
+        layout.addWidget(self._mode_hint_label)
+
         self._tag_form = TagForm()
         self._tag_form.set_enabled(False)
         layout.addWidget(self._tag_form)
 
-        # Action buttons
         btn_layout = QHBoxLayout()
         self._save_btn = QPushButton("Save")
         self._save_btn.setProperty("role", "accent")
@@ -66,18 +100,12 @@ class TagEditorPanel(QDialog):
         self._revert_btn = QPushButton("Revert")
         self._revert_btn.setEnabled(False)
         self._revert_btn.clicked.connect(self._revert_tags)
-        self._save_all_btn = QPushButton("Save All")
-        self._save_all_btn.setProperty("role", "accent")
-        self._save_all_btn.setEnabled(False)
-        self._save_all_btn.clicked.connect(self._save_all_tags)
 
         btn_layout.addStretch()
         btn_layout.addWidget(self._revert_btn)
         btn_layout.addWidget(self._save_btn)
-        btn_layout.addWidget(self._save_all_btn)
         layout.addLayout(btn_layout)
 
-        # Progress
         self._progress = ProgressIndicator()
         layout.addWidget(self._progress)
 
@@ -85,98 +113,166 @@ class TagEditorPanel(QDialog):
         self._cache_db_path = path
 
     def load_files(self, paths: list[Path]) -> None:
-        """Load a list of files for editing."""
+        """Load selected files for single-file or bulk editing."""
         self._files = list(paths)
-        if self._files:
-            self._current_index = 0
-            self._load_current()
-            self._save_btn.setEnabled(True)
-            self._revert_btn.setEnabled(True)
-            self._save_all_btn.setEnabled(len(self._files) > 1)
-            self._tag_form.set_enabled(True)
-        else:
-            self._current_index = -1
-            self._tag_form.clear()
-            self._tag_form.set_enabled(False)
-            self._file_label.setText("No file loaded")
-            self._counter_label.clear()
-            self._save_btn.setEnabled(False)
-            self._revert_btn.setEnabled(False)
-            self._save_all_btn.setEnabled(False)
+        if not self._files:
+            self._reset_empty_state()
+            return
+
+        self._bulk_mode = len(self._files) > 1
+        self._save_btn.setEnabled(True)
+        self._revert_btn.setEnabled(True)
+        self._tag_form.set_enabled(True)
+        self._current_index = 0
+
+        if self._bulk_mode:
+            self._enter_bulk_mode()
+            return
+        self._enter_single_mode()
+
+    def _enter_single_mode(self) -> None:
+        self._bulk_baseline_tags = None
+        self._save_btn.setText("Save")
+        self._save_btn.setToolTip("Save tags for the current file.")
+        self._mode_hint_label.clear()
+        self._set_navigation_visible(True)
+        self._load_current()
+
+    def _enter_bulk_mode(self) -> None:
+        self._set_navigation_visible(False)
+        self._save_btn.setText("Apply to Selected")
+        self._save_btn.setToolTip("Apply changed fields to all selected files.")
+        self._file_label.setText("Bulk edit selected files")
+        self._counter_label.setText(f"{len(self._files)} selected")
+        self._mode_hint_label.setText(
+            "Only changed fields are applied across selected files. "
+            "Unchanged fields stay per-track."
+        )
+        self._bulk_baseline_tags = self._build_bulk_baseline_tags()
+        self._original_tags = self._bulk_baseline_tags
+        self._tag_form.set_tags(self._bulk_baseline_tags)
+        self._tag_form.mark_clean()
+
+    def _reset_empty_state(self) -> None:
+        self._current_index = -1
+        self._bulk_mode = False
+        self._bulk_baseline_tags = None
+        self._original_tags = None
+        self._tag_form.clear()
+        self._tag_form.set_enabled(False)
+        self._mode_hint_label.clear()
+        self._file_label.setText("No file loaded")
+        self._counter_label.clear()
+        self._save_btn.setEnabled(False)
+        self._revert_btn.setEnabled(False)
+        self._save_btn.setText("Save")
+        self._set_navigation_visible(True)
+        self._prev_btn.setEnabled(False)
+        self._next_btn.setEnabled(False)
+
+    def _set_navigation_visible(self, visible: bool) -> None:
+        self._prev_btn.setVisible(visible)
+        self._next_btn.setVisible(visible)
 
     def _load_current(self) -> None:
-        if self._current_index < 0 or self._current_index >= len(self._files):
+        if self._bulk_mode or self._current_index < 0 or self._current_index >= len(self._files):
             return
         path = self._files[self._current_index]
         self._file_label.setText(path.name)
-        self._counter_label.setText(
-            f"{self._current_index + 1} / {len(self._files)}"
-        )
+        self._counter_label.setText(f"{self._current_index + 1} / {len(self._files)}")
         self._prev_btn.setEnabled(self._current_index > 0)
         self._next_btn.setEnabled(self._current_index < len(self._files) - 1)
 
-        try:
-            tags = self._tag_manager.read(path)
-        except Exception:
-            tags = TagData()
+        tags = self._read_tags_safe(path)
         QApplication.processEvents()
         self._original_tags = tags
         self._tag_form.set_tags(tags)
 
     def _prev_file(self) -> None:
+        if self._bulk_mode:
+            return
         if self._current_index > 0:
             self._current_index -= 1
             self._load_current()
 
     def _next_file(self) -> None:
+        if self._bulk_mode:
+            return
         if self._current_index < len(self._files) - 1:
             self._current_index += 1
             self._load_current()
 
     def _save_tags(self) -> None:
-        if self._current_index < 0:
+        if self._current_index < 0 or not self._files:
             return
+        if self._bulk_mode:
+            self._apply_bulk_tags()
+            return
+        self._save_current_file_tags()
+
+    def _save_current_file_tags(self) -> None:
         path = self._files[self._current_index]
         tags = self._tag_form.get_tags()
         try:
             self._tag_manager.write(path, tags)
             self._invalidate_cache_entries([path])
             self._original_tags = tags
+            self._tag_form.mark_clean()
             self._progress.start("Saved!")
             self._progress.finish(f"Saved tags for {path.name}")
         except Exception as exc:
             QMessageBox.critical(self, "Save Error", str(exc))
 
-    def _revert_tags(self) -> None:
-        if self._original_tags:
-            self._tag_form.set_tags(self._original_tags)
-
-    def _save_all_tags(self) -> None:
-        """Save the current form's tags to ALL loaded files."""
+    def _apply_bulk_tags(self) -> None:
         if not self._files:
             return
         if self._save_thread and self._save_thread.isRunning():
+            QMessageBox.information(self, "Save In Progress", "A bulk save is already running.")
+            return
+        if self._bulk_baseline_tags is None:
+            return
+
+        form_tags = self._tag_form.get_tags()
+        changed_fields = self._changed_scalar_fields(form_tags, self._bulk_baseline_tags)
+        artwork_changed = self._tag_form.artwork_modified()
+        if not changed_fields and not artwork_changed:
             QMessageBox.information(
                 self,
-                "Save In Progress",
-                "A bulk save is already running.",
+                "No Changes",
+                "Change at least one field before applying to selected files.",
             )
             return
 
+        changed_names = [self._FIELD_LABELS[field] for field in changed_fields]
+        if artwork_changed:
+            changed_names.append("Artwork")
+        changed_summary = ", ".join(changed_names)
         reply = QMessageBox.question(
-            self, "Save All",
-            f"Apply current tags (including artwork) to all {len(self._files)} files?",
+            self,
+            "Apply to Selected",
+            f"Apply changed fields to {len(self._files)} files?\n\n{changed_summary}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        tags = self._tag_form.get_tags()
-        items = [(p, tags) for p in self._files]
+        items = self._build_bulk_write_items(form_tags, changed_fields, artwork_changed)
+        self._start_bulk_write(items)
 
-        self._progress.start("Saving all...")
+    def _revert_tags(self) -> None:
+        if self._bulk_mode:
+            if self._bulk_baseline_tags is not None:
+                self._tag_form.set_tags(self._bulk_baseline_tags)
+                self._tag_form.mark_clean()
+            return
+        if self._original_tags is not None:
+            self._tag_form.set_tags(self._original_tags)
+            self._tag_form.mark_clean()
+
+    def _start_bulk_write(self, items: list[tuple[Path, TagData]]) -> None:
+        self._progress.start("Applying changes...")
         self._save_btn.setEnabled(False)
-        self._save_all_btn.setEnabled(False)
+        self._revert_btn.setEnabled(False)
 
         self._save_worker = TagWriteWorker(items, cache_db_path=self._cache_db_path)
         self._save_thread = QThread()
@@ -197,12 +293,8 @@ class TagEditorPanel(QDialog):
         count, failed = self._coerce_save_summary(payload)
 
         if failed:
-            self._progress.finish(
-                f"Saved tags to {count} files ({len(failed)} failed)"
-            )
-            preview = "\n".join(
-                f"- {path.name}: {error}" for path, error in failed[:8]
-            )
+            self._progress.finish(f"Saved tags to {count} files ({len(failed)} failed)")
+            preview = "\n".join(f"- {path.name}: {error}" for path, error in failed[:8])
             if len(failed) > 8:
                 preview += f"\n... and {len(failed) - 8} more"
             QMessageBox.warning(
@@ -212,8 +304,13 @@ class TagEditorPanel(QDialog):
             )
         else:
             self._progress.finish(f"Saved tags to {count} files")
+
         self._save_btn.setEnabled(True)
-        self._save_all_btn.setEnabled(len(self._files) > 1)
+        self._revert_btn.setEnabled(True)
+        if self._bulk_mode:
+            self._bulk_baseline_tags = self._tag_form.get_tags()
+            self._original_tags = self._bulk_baseline_tags
+            self._tag_form.mark_clean()
 
     def _on_save_all_progress(self, current: int, total: int, message: str) -> None:
         self._progress.update_progress(current, total, f"Writing: {message}")
@@ -221,7 +318,7 @@ class TagEditorPanel(QDialog):
     def _on_save_all_error(self, error_message: str) -> None:
         self._progress.finish(f"Error: {error_message}")
         self._save_btn.setEnabled(True)
-        self._save_all_btn.setEnabled(len(self._files) > 1)
+        self._revert_btn.setEnabled(True)
         QMessageBox.critical(self, "Save Error", error_message)
 
     @staticmethod
@@ -244,6 +341,76 @@ class TagEditorPanel(QDialog):
                     continue
                 failed_writes.append((Path(item[0]), str(item[1])))
         return written_count, failed_writes
+
+    def _build_bulk_baseline_tags(self) -> TagData:
+        all_tags = [self._read_tags_safe(path) for path in self._files]
+        if not all_tags:
+            return TagData()
+
+        def common_text(getter: str) -> str:
+            values = [str(getattr(tag, getter)) for tag in all_tags]
+            first = values[0]
+            return first if all(value == first for value in values[1:]) else ""
+
+        def common_int(getter: str) -> int:
+            values = [int(getattr(tag, getter)) for tag in all_tags]
+            first = values[0]
+            return first if all(value == first for value in values[1:]) else 0
+
+        artwork_pairs = [
+            (tag.artwork_data or b"", tag.artwork_mime or "")
+            for tag in all_tags
+        ]
+        first_artwork = artwork_pairs[0]
+        if all(pair == first_artwork for pair in artwork_pairs[1:]):
+            artwork_data, artwork_mime = first_artwork
+        else:
+            artwork_data, artwork_mime = b"", ""
+
+        return TagData(
+            title=common_text("title"),
+            artist=common_text("artist"),
+            album=common_text("album"),
+            albumartist=common_text("albumartist"),
+            track=common_int("track"),
+            disc=common_int("disc"),
+            year=common_int("year"),
+            genre=common_text("genre"),
+            composer=common_text("composer"),
+            artwork_data=artwork_data,
+            artwork_mime=artwork_mime,
+        )
+
+    def _changed_scalar_fields(self, current: TagData, baseline: TagData) -> set[str]:
+        changed: set[str] = set()
+        for field_name in self._SCALAR_FIELDS:
+            if getattr(current, field_name) != getattr(baseline, field_name):
+                changed.add(field_name)
+        return changed
+
+    def _build_bulk_write_items(
+        self,
+        form_tags: TagData,
+        changed_fields: set[str],
+        artwork_changed: bool,
+    ) -> list[tuple[Path, TagData]]:
+        items: list[tuple[Path, TagData]] = []
+        for path in self._files:
+            current = self._read_tags_safe(path)
+            merged = TagData(**current.as_dict())
+            for field_name in changed_fields:
+                setattr(merged, field_name, getattr(form_tags, field_name))
+            if artwork_changed:
+                merged.artwork_data = form_tags.artwork_data
+                merged.artwork_mime = form_tags.artwork_mime
+            items.append((path, merged))
+        return items
+
+    def _read_tags_safe(self, path: Path) -> TagData:
+        try:
+            return self._tag_manager.read(path)
+        except Exception:
+            return TagData()
 
     def _cleanup_thread(self) -> None:
         save_worker = self._save_worker
@@ -294,6 +461,7 @@ class TagEditorPanel(QDialog):
                     pass
 
     def shutdown(self, timeout_ms: int = 3000) -> None:
+        _ = timeout_ms
         if self._save_worker:
             self._save_worker.cancel()
         if self._save_thread and self._save_thread.isRunning():

@@ -5,6 +5,8 @@ from __future__ import annotations
 import mimetypes
 from pathlib import Path
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QMessageBox, QSpinBox, QWidget,
@@ -35,6 +37,11 @@ class TagForm(QWidget):
         self.composer_edit = QLineEdit()
         self._artwork_data: bytes = b""
         self._artwork_mime: str = ""
+        self._artwork_modified = False
+        self._artwork_preview = QLabel("No Preview")
+        self._artwork_preview.setObjectName("AlbumCover")
+        self._artwork_preview.setFixedSize(96, 96)
+        self._artwork_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._artwork_label = QLabel("No artwork")
         self._choose_artwork_btn = QPushButton("Choose Image...")
         self._choose_artwork_btn.clicked.connect(self._choose_artwork)
@@ -45,6 +52,8 @@ class TagForm(QWidget):
         artwork_widget = QWidget()
         artwork_layout = QHBoxLayout(artwork_widget)
         artwork_layout.setContentsMargins(0, 0, 0, 0)
+        artwork_layout.setSpacing(8)
+        artwork_layout.addWidget(self._artwork_preview, 0)
         artwork_layout.addWidget(self._artwork_label, 1)
         artwork_layout.addWidget(self._choose_artwork_btn)
         artwork_layout.addWidget(self._clear_artwork_btn)
@@ -72,6 +81,7 @@ class TagForm(QWidget):
         self.composer_edit.setText(tags.composer)
         self._artwork_data = tags.artwork_data or b""
         self._artwork_mime = tags.artwork_mime or ""
+        self._artwork_modified = False
         self._refresh_artwork_label()
 
     def get_tags(self) -> TagData:
@@ -101,6 +111,7 @@ class TagForm(QWidget):
         self.composer_edit.clear()
         self._artwork_data = b""
         self._artwork_mime = ""
+        self._artwork_modified = False
         self._refresh_artwork_label()
 
     def set_enabled(self, enabled: bool) -> None:
@@ -142,22 +153,49 @@ class TagForm(QWidget):
             return
         mime, _ = mimetypes.guess_type(path.name)
         self._artwork_mime = mime or "image/jpeg"
+        self._artwork_modified = True
         self._refresh_artwork_label(path.name)
 
     def _clear_artwork(self) -> None:
         self._artwork_data = b""
         self._artwork_mime = ""
+        self._artwork_modified = True
         self._refresh_artwork_label()
+
+    def artwork_modified(self) -> bool:
+        return self._artwork_modified
+
+    def mark_clean(self) -> None:
+        self._artwork_modified = False
 
     def _refresh_artwork_label(self, source_name: str = "") -> None:
         if self._artwork_data:
             size_kb = max(1, len(self._artwork_data) // 1024)
+            pixmap = QPixmap()
+            if pixmap.loadFromData(self._artwork_data):
+                dimensions = f"{pixmap.width()}x{pixmap.height()} px"
+                preview = pixmap.scaled(
+                    self._artwork_preview.size(),
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+                self._artwork_preview.setPixmap(preview)
+                self._artwork_preview.setText("")
+            else:
+                dimensions = "unknown size"
+                self._artwork_preview.setPixmap(QPixmap())
+                self._artwork_preview.setText("Invalid")
             if source_name:
-                self._artwork_label.setText(f"{source_name} ({size_kb} KB)")
+                label_text = f"Selected: {source_name} ({dimensions}, {size_kb} KB)"
             else:
                 mime = self._artwork_mime or "image/*"
-                self._artwork_label.setText(f"Embedded artwork ({mime}, {size_kb} KB)")
+                label_text = f"Current: Embedded artwork ({mime}, {dimensions}, {size_kb} KB)"
+            self._artwork_label.setText(label_text)
+            self._artwork_label.setToolTip(label_text)
             self._clear_artwork_btn.setEnabled(True)
         else:
             self._artwork_label.setText("No artwork")
+            self._artwork_label.setToolTip("")
+            self._artwork_preview.setPixmap(QPixmap())
+            self._artwork_preview.setText("No Preview")
             self._clear_artwork_btn.setEnabled(False)

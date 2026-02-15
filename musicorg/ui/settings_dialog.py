@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
     QLineEdit, QSlider, QVBoxLayout,
 )
@@ -18,6 +19,12 @@ if TYPE_CHECKING:
 
 class SettingsDialog(QDialog):
     """Dialog for editing application preferences."""
+
+    _ALBUM_SELECTION_MODE_ITEMS: tuple[tuple[str, str], ...] = (
+        ("Single-click artwork toggles album", "single_click"),
+        ("Double-click artwork toggles album", "double_click"),
+        ("Off (preview only)", "none"),
+    )
 
     def __init__(self, settings: AppSettings, parent=None) -> None:
         super().__init__(parent)
@@ -36,11 +43,15 @@ class SettingsDialog(QDialog):
         self._discogs_token_edit = QLineEdit()
         self._discogs_token_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self._path_format_edit = QLineEdit()
+        self._album_selection_mode_combo = QComboBox()
+        for label, value in self._ALBUM_SELECTION_MODE_ITEMS:
+            self._album_selection_mode_combo.addItem(label, value)
 
         form.addRow("Default Source Directory:", self._source_picker)
         form.addRow("Default Destination Directory:", self._dest_picker)
         form.addRow("Discogs User Token:", self._discogs_token_edit)
         form.addRow("Path Format:", self._path_format_edit)
+        form.addRow("Artwork Click Behavior:", self._album_selection_mode_combo)
 
         # Backdrop opacity slider
         slider_layout = QHBoxLayout()
@@ -71,6 +82,9 @@ class SettingsDialog(QDialog):
         self._dest_picker.set_path(self._settings.dest_dir)
         self._discogs_token_edit.setText(self._settings.discogs_token)
         self._path_format_edit.setText(self._settings.path_format)
+        mode = self._settings.album_artwork_selection_mode
+        index = self._album_selection_mode_combo.findData(mode)
+        self._album_selection_mode_combo.setCurrentIndex(max(0, index))
         slider_val = int(self._settings.backdrop_opacity * 100)
         self._opacity_slider.setValue(slider_val)
 
@@ -79,5 +93,8 @@ class SettingsDialog(QDialog):
         self._settings.dest_dir = self._dest_picker.path()
         self._settings.discogs_token = self._discogs_token_edit.text().strip()
         self._settings.path_format = self._path_format_edit.text().strip()
+        self._settings.album_artwork_selection_mode = str(
+            self._album_selection_mode_combo.currentData()
+        )
         self._settings.backdrop_opacity = self._opacity_slider.value() / 100.0
         self.accept()

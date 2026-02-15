@@ -14,7 +14,14 @@ from PySide6.QtWidgets import (
 from musicorg.ui.autotag_panel import AutoTagPanel
 from musicorg.ui.artwork_downloader_panel import ArtworkDownloaderPanel
 from musicorg.ui.duplicates_panel import DuplicatesPanel
+from musicorg.ui.keybindings import (
+    DEFAULT_KEYBINDS,
+    KeybindConflictError,
+    KeybindRegistry,
+    create_bound_action,
+)
 from musicorg.ui.settings_dialog import SettingsDialog
+from musicorg.ui.shortcuts_dialog import ShortcutsDialog
 from musicorg.ui.source_panel import SourcePanel
 from musicorg.ui.sync_panel import SyncPanel
 from musicorg.ui.tag_editor_panel import TagEditorPanel
@@ -32,6 +39,17 @@ class MainWindow(QMainWindow):
     def __init__(self, settings: AppSettings) -> None:
         super().__init__()
         self._settings = settings
+        self._tag_editor_action: QAction | None = None
+        self._autotag_action: QAction | None = None
+        self._artwork_action: QAction | None = None
+        try:
+            self._keybind_registry = KeybindRegistry(
+                DEFAULT_KEYBINDS,
+                self._settings.keybind_overrides,
+            )
+        except (KeybindConflictError, ValueError):
+            self._settings.keybind_overrides = {}
+            self._keybind_registry = KeybindRegistry(DEFAULT_KEYBINDS)
 
         self.setWindowTitle("MusicOrg")
         self.setMinimumSize(900, 600)
@@ -63,6 +81,9 @@ class MainWindow(QMainWindow):
 
         self._stack = QStackedWidget()
         self._source_panel = SourcePanel()
+        self._source_panel.set_album_artwork_selection_mode(
+            self._settings.album_artwork_selection_mode
+        )
         self._sync_panel = SyncPanel()
         self._duplicates_panel = DuplicatesPanel()
 
@@ -121,35 +142,64 @@ class MainWindow(QMainWindow):
 
         # File menu
         file_menu = menubar.addMenu("&File")
-        exit_action = QAction("E&xit", self)
-        exit_action.setShortcut("Ctrl+Q")
-        exit_action.triggered.connect(self.close)
+        exit_action = create_bound_action(
+            parent=self,
+            text="E&xit",
+            keybind_id="app.exit",
+            registry=self._keybind_registry,
+            handler=self.close,
+        )
         file_menu.addAction(exit_action)
 
         # Settings menu
         settings_menu = menubar.addMenu("&Settings")
-        prefs_action = QAction("&Preferences...", self)
-        prefs_action.setShortcut("Ctrl+,")
-        prefs_action.triggered.connect(self._open_settings)
+        prefs_action = create_bound_action(
+            parent=self,
+            text="&Preferences...",
+            keybind_id="app.preferences",
+            registry=self._keybind_registry,
+            handler=self._open_settings,
+        )
         settings_menu.addAction(prefs_action)
 
         # Tools menu
         tools_menu = menubar.addMenu("&Tools")
-        tag_editor_action = QAction("Open &Tag Editor", self)
-        tag_editor_action.setShortcut("Ctrl+E")
-        tag_editor_action.triggered.connect(self._open_tag_editor_from_selection)
-        tools_menu.addAction(tag_editor_action)
-        autotag_action = QAction("Open &Auto-Tag", self)
-        autotag_action.setShortcut("Ctrl+T")
-        autotag_action.triggered.connect(self._open_autotag_from_selection)
-        tools_menu.addAction(autotag_action)
-        artwork_action = QAction("Open &Artwork Downloader", self)
-        artwork_action.setShortcut("Ctrl+Shift+A")
-        artwork_action.triggered.connect(self._open_artwork_from_selection)
-        tools_menu.addAction(artwork_action)
+        self._tag_editor_action = create_bound_action(
+            parent=self,
+            text="Open &Tag Editor",
+            keybind_id="tools.open_tag_editor",
+            registry=self._keybind_registry,
+            handler=self._open_tag_editor_from_selection,
+        )
+        tools_menu.addAction(self._tag_editor_action)
+        self._autotag_action = create_bound_action(
+            parent=self,
+            text="Open &Auto-Tag",
+            keybind_id="tools.open_autotag",
+            registry=self._keybind_registry,
+            handler=self._open_autotag_from_selection,
+        )
+        tools_menu.addAction(self._autotag_action)
+        self._artwork_action = create_bound_action(
+            parent=self,
+            text="Open &Artwork Downloader",
+            keybind_id="tools.open_artwork",
+            registry=self._keybind_registry,
+            handler=self._open_artwork_from_selection,
+        )
+        tools_menu.addAction(self._artwork_action)
+        self._update_tools_availability(total=0, selected=0)
 
         # Help menu
         help_menu = menubar.addMenu("&Help")
+        shortcuts_action = create_bound_action(
+            parent=self,
+            text="Keyboard &Shortcuts",
+            keybind_id="help.keyboard_shortcuts",
+            registry=self._keybind_registry,
+            handler=self._open_shortcuts,
+        )
+        help_menu.addAction(shortcuts_action)
         about_action = QAction("&About", self)
         about_action.triggered.connect(self._show_about)
         help_menu.addAction(about_action)
@@ -160,11 +210,26 @@ class MainWindow(QMainWindow):
         self._source_panel.send_to_autotag_requested.connect(self._send_to_autotag)
         self._source_panel.send_to_artwork_requested.connect(self._send_to_artwork)
         self._source_panel.selection_stats_changed.connect(self._status_strip.set_file_count)
+        self._source_panel.selection_stats_changed.connect(self._update_tools_availability)
         self._source_panel.album_artwork_changed.connect(self._backdrop.set_artwork)
+        self._update_tools_availability(
+            total=0,
+            selected=len(self._source_panel.selected_paths()),
+        )
         # Auto-Tag applied -> refresh notice
         self._autotag_panel.tags_applied.connect(
             lambda: self._status_strip.show_message("Tags applied - re-scan to see changes")
         )
+
+    def _update_tools_availability(self, total: int, selected: int) -> None:
+        _ = total
+        enabled = selected > 0
+        if self._tag_editor_action is not None:
+            self._tag_editor_action.setEnabled(enabled)
+        if self._autotag_action is not None:
+            self._autotag_action.setEnabled(enabled)
+        if self._artwork_action is not None:
+            self._artwork_action.setEnabled(enabled)
 
     def _send_to_editor(self, paths: list[Path]) -> None:
         if paths:
@@ -218,6 +283,9 @@ class MainWindow(QMainWindow):
             if self._settings.dest_dir:
                 self._sync_panel.set_dest_dir(self._settings.dest_dir)
             self._sync_panel.set_path_format(self._settings.path_format)
+            self._source_panel.set_album_artwork_selection_mode(
+                self._settings.album_artwork_selection_mode
+            )
             self._backdrop.set_opacity(self._settings.backdrop_opacity)
             self._status_strip.show_message("Settings updated")
 
@@ -233,6 +301,14 @@ class MainWindow(QMainWindow):
             "  - Auto-tagging via MusicBrainz + Discogs\n"
             "  - Non-destructive directory sync"
         )
+
+    def _open_shortcuts(self) -> None:
+        dialog = ShortcutsDialog(
+            self._keybind_registry,
+            album_artwork_selection_mode=self._source_panel.album_artwork_selection_mode,
+            parent=self,
+        )
+        dialog.exec()
 
     def _restore_state(self) -> None:
         geo = self._settings.window_geometry

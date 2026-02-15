@@ -7,6 +7,11 @@ import math
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
 
+from musicorg.ui.keybindings import (
+    AlbumArtworkSelectionMode,
+    DEFAULT_ALBUM_ARTWORK_SELECTION_MODE,
+    normalize_album_artwork_selection_mode,
+)
 from musicorg.ui.models.file_table_model import FileTableRow
 from musicorg.ui.widgets.album_card import AlbumCard
 from musicorg.ui.widgets.selection_manager import SelectionManager
@@ -47,8 +52,17 @@ class AlbumBrowser(QScrollArea):
         self._slots: list[QWidget] = []
         self._materialized: set[int] = set()
         self._update_scheduled = False
+        self._album_artwork_selection_mode: AlbumArtworkSelectionMode = (
+            DEFAULT_ALBUM_ARTWORK_SELECTION_MODE
+        )
 
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
+
+    def set_album_artwork_selection_mode(self, mode: AlbumArtworkSelectionMode) -> None:
+        self._album_artwork_selection_mode = normalize_album_artwork_selection_mode(mode)
+        for slot in self._slots:
+            if isinstance(slot, AlbumCard):
+                slot.set_album_artwork_selection_mode(self._album_artwork_selection_mode)
 
     def set_albums(
         self,
@@ -58,6 +72,8 @@ class AlbumBrowser(QScrollArea):
         self.clear()
         self._selection_manager = selection_manager
         self._album_data = [(name, albums[name]) for name in sorted(albums)]
+        ordered_paths = [row.path for _, rows in self._album_data for row in rows]
+        selection_manager.set_ordered_paths(ordered_paths)
 
         for _album_name, rows in self._album_data:
             placeholder = self._make_placeholder(self._estimate_card_height(rows))
@@ -138,7 +154,12 @@ class AlbumBrowser(QScrollArea):
             return
 
         album_name, rows = self._album_data[index]
-        card = AlbumCard(album_name, rows, self._selection_manager)
+        card = AlbumCard(
+            album_name,
+            rows,
+            self._selection_manager,
+            album_artwork_selection_mode=self._album_artwork_selection_mode,
+        )
         card.album_clicked.connect(self.album_artwork_changed.emit)
         card.send_to_editor.connect(self.send_to_editor.emit)
         card.send_to_autotag.connect(self.send_to_autotag.emit)

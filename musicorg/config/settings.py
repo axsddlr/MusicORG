@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Mapping
 
 from PySide6.QtCore import QSettings
 
@@ -67,6 +68,48 @@ class AppSettings:
     @backdrop_opacity.setter
     def backdrop_opacity(self, value: float) -> None:
         self._qs.setValue("ui/backdrop_opacity", value)
+
+    # -- album artwork selection mode --
+
+    @property
+    def album_artwork_selection_mode(self) -> str:
+        raw = self._qs.value("ui/album_artwork_selection_mode", "single_click", type=str)
+        mode = (raw or "").strip().lower()
+        if mode in {"none", "single_click", "double_click"}:
+            return mode
+        return "single_click"
+
+    @album_artwork_selection_mode.setter
+    def album_artwork_selection_mode(self, value: str) -> None:
+        mode = (value or "").strip().lower()
+        if mode not in {"none", "single_click", "double_click"}:
+            mode = "single_click"
+        self._qs.setValue("ui/album_artwork_selection_mode", mode)
+
+    # -- keybind overrides --
+
+    @property
+    def keybind_overrides(self) -> dict[str, str]:
+        raw = self._qs.value("ui/keybind_overrides", {})
+        if raw is None:
+            return {}
+        if isinstance(raw, Mapping):
+            source_items = raw.items()
+        else:
+            return {}
+        cleaned: dict[str, str] = {}
+        for key, value in source_items:
+            if isinstance(key, str) and isinstance(value, str):
+                cleaned[key] = value
+        return cleaned
+
+    @keybind_overrides.setter
+    def keybind_overrides(self, value: dict[str, str]) -> None:
+        cleaned: dict[str, str] = {}
+        for key, item in value.items():
+            if isinstance(key, str) and isinstance(item, str):
+                cleaned[key] = item
+        self._qs.setValue("ui/keybind_overrides", cleaned)
 
     # -- window geometry --
 

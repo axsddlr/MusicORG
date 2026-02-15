@@ -18,6 +18,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from musicorg.ui.keybindings import (
+    AlbumArtworkSelectionMode,
+    DEFAULT_ALBUM_ARTWORK_SELECTION_MODE,
+    normalize_album_artwork_selection_mode,
+)
 from musicorg.ui.models.file_table_model import FileTableRow
 from musicorg.ui.widgets.selection_manager import SelectionManager
 
@@ -115,12 +120,12 @@ class TrackRow(QFrame):
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton and self._selection_manager is not None:
             modifiers = event.modifiers()
-            allow_select = bool(
-                modifiers
-                & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
-            )
-            if allow_select:
-                self._selection_manager.select(self._path)
+            has_ctrl = bool(modifiers & Qt.KeyboardModifier.ControlModifier)
+            has_shift = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
+            if has_shift:
+                self._selection_manager.select_range_to(self._path, additive=has_ctrl)
+            elif has_ctrl:
+                self._selection_manager.toggle(self._path)
         super().mousePressEvent(event)
 
     def keyPressEvent(self, event) -> None:
@@ -170,6 +175,9 @@ class AlbumCard(QFrame):
         album_name: str,
         rows: list[FileTableRow],
         selection_manager: SelectionManager,
+        album_artwork_selection_mode: AlbumArtworkSelectionMode = (
+            DEFAULT_ALBUM_ARTWORK_SELECTION_MODE
+        ),
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -181,17 +189,20 @@ class AlbumCard(QFrame):
         self._selection_badge = QLabel("")
         self._selection_badge.setObjectName("AlbumSelectedBadge")
         self._selection_badge.setVisible(False)
+        self._album_artwork_selection_mode = normalize_album_artwork_selection_mode(
+            album_artwork_selection_mode
+        )
 
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(14)
 
         # Cover art (120x120)
-        cover_label = QLabel()
-        cover_label.setObjectName("AlbumCover")
-        cover_label.setMinimumSize(108, 108)
-        cover_label.setMaximumSize(132, 132)
-        cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._cover_label = QLabel()
+        self._cover_label.setObjectName("AlbumCover")
+        self._cover_label.setMinimumSize(108, 108)
+        self._cover_label.setMaximumSize(132, 132)
+        self._cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         artwork = self._find_artwork(rows)
         self._artwork_data: bytes = artwork
         if artwork:
@@ -202,12 +213,12 @@ class AlbumCard(QFrame):
                     Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation,
                 )
-                cover_label.setPixmap(scaled)
+                self._cover_label.setPixmap(scaled)
             else:
-                cover_label.setText("No Art")
+                self._cover_label.setText("No Art")
         else:
-            cover_label.setText("No Art")
-        main_layout.addWidget(cover_label, 0, Qt.AlignmentFlag.AlignTop)
+            self._cover_label.setText("No Art")
+        main_layout.addWidget(self._cover_label, 0, Qt.AlignmentFlag.AlignTop)
 
         # Right side: metadata + tracks
         right = QVBoxLayout()
@@ -321,9 +332,40 @@ class AlbumCard(QFrame):
         event.accept()
 
     def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.MouseButton.LeftButton and self._artwork_data:
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self._artwork_data
+            and self._is_artwork_click(event)
+        ):
             self.album_clicked.emit(self._artwork_data)
+            if (
+                self._selection_manager is not None
+                and self._album_artwork_selection_mode == "single_click"
+            ):
+                modifiers = event.modifiers()
+                additive = bool(modifiers & Qt.KeyboardModifier.ControlModifier)
+                self._selection_manager.toggle_group(self._all_paths, additive=additive)
         super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self._selection_manager is not None
+            and self._album_artwork_selection_mode == "double_click"
+            and self._is_artwork_click(event)
+        ):
+            modifiers = event.modifiers()
+            additive = bool(modifiers & Qt.KeyboardModifier.ControlModifier)
+            self._selection_manager.toggle_group(self._all_paths, additive=additive)
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def set_album_artwork_selection_mode(
+        self,
+        mode: AlbumArtworkSelectionMode,
+    ) -> None:
+        self._album_artwork_selection_mode = normalize_album_artwork_selection_mode(mode)
 
     def cleanup(self) -> None:
         if self._selection_manager is not None:
@@ -357,3 +399,8 @@ class AlbumCard(QFrame):
             disc = row.tags.disc if row.tags.disc > 0 else 1
             discs.setdefault(disc, []).append(row)
         return discs
+
+    def _is_artwork_click(self, event) -> bool:
+        point_value = event.position() if hasattr(event, "position") else event.pos()
+        point = point_value.toPoint() if hasattr(point_value, "toPoint") else point_value
+        return self._cover_label.geometry().contains(point)

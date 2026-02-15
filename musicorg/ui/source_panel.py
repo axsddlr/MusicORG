@@ -13,6 +13,12 @@ from PySide6.QtWidgets import (
 )
 
 from musicorg.core.tagger import TagData
+from musicorg.ui.keybindings import (
+    AlbumArtworkSelectionMode,
+    DEFAULT_ALBUM_ARTWORK_SELECTION_MODE,
+    normalize_album_artwork_selection_mode,
+    selection_behavior_hint,
+)
 from musicorg.ui.models.file_table_model import FileTableRow
 from musicorg.ui.widgets.album_browser import AlbumBrowser
 from musicorg.ui.widgets.alphabet_bar import AlphabetBar
@@ -56,6 +62,9 @@ class SourcePanel(QWidget):
         self._last_scanned_path = ""
         self._pending_auto_scan_path = ""
         self._first_batch_rendered = False
+        self._album_artwork_selection_mode: AlbumArtworkSelectionMode = (
+            DEFAULT_ALBUM_ARTWORK_SELECTION_MODE
+        )
         self._auto_scan_timer = QTimer(self)
         self._auto_scan_timer.setSingleShot(True)
         self._auto_scan_timer.setInterval(400)
@@ -116,6 +125,10 @@ class SourcePanel(QWidget):
         action_layout.addWidget(self._open_autotag_btn)
         action_layout.addWidget(self._open_artwork_btn)
         layout.addWidget(action_container)
+        self._selection_hint_label = QLabel("")
+        self._selection_hint_label.setObjectName("StatusMuted")
+        self._selection_hint_label.setWordWrap(True)
+        layout.addWidget(self._selection_hint_label)
 
         # Browser layout: artists sidebar + album browser
         browser_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -153,6 +166,9 @@ class SourcePanel(QWidget):
         self._album_browser.send_to_editor.connect(self.send_to_editor_requested.emit)
         self._album_browser.send_to_autotag.connect(self.send_to_autotag_requested.emit)
         self._album_browser.send_to_artwork.connect(self.send_to_artwork_requested.emit)
+        self._album_browser.set_album_artwork_selection_mode(
+            self._album_artwork_selection_mode
+        )
         content_layout.addWidget(self._album_browser, 1)
 
         browser_splitter.addWidget(artist_pane)
@@ -165,6 +181,9 @@ class SourcePanel(QWidget):
         # Progress
         self._progress = ProgressIndicator()
         layout.addWidget(self._progress)
+        self._selection_hint_label.setText(
+            selection_behavior_hint(self._album_artwork_selection_mode)
+        )
         self._update_selection_action_buttons()
 
     def set_source_dir(self, path: str) -> None:
@@ -178,6 +197,19 @@ class SourcePanel(QWidget):
 
     def set_cache_db_path(self, path: str) -> None:
         self._cache_db_path = path
+
+    @property
+    def album_artwork_selection_mode(self) -> AlbumArtworkSelectionMode:
+        return self._album_artwork_selection_mode
+
+    def set_album_artwork_selection_mode(self, mode: str) -> None:
+        self._album_artwork_selection_mode = normalize_album_artwork_selection_mode(mode)
+        self._album_browser.set_album_artwork_selection_mode(
+            self._album_artwork_selection_mode
+        )
+        self._selection_hint_label.setText(
+            selection_behavior_hint(self._album_artwork_selection_mode)
+        )
 
     def _on_selection_changed(self, _selected_paths: list[Path]) -> None:
         self._update_selection_action_buttons()
