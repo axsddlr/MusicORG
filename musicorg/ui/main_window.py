@@ -295,11 +295,15 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self, "About MusicOrg",
             f"MusicOrg v{__version__}\n\n"
-            "A PySide6 desktop UI for music library management.\n\n"
+            "A PySide6 desktop app for MP3/FLAC library management.\n\n"
             "Features:\n"
-            "  - ID3 tag reading/editing for MP3 and FLAC\n"
+            "  - Single-file and bulk tag editing (changed-fields apply)\n"
             "  - Auto-tagging via MusicBrainz + Discogs\n"
-            "  - Non-destructive directory sync"
+            "  - Artwork downloader with preview + apply to selected files\n"
+            "  - Ctrl/Shift range selection and album-level artwork selection\n"
+            "  - Non-destructive directory sync and duplicate review\n"
+            "\nHelp:\n"
+            "  - Help > Keyboard Shortcuts for keybind and selection reference"
         )
 
     def _open_shortcuts(self) -> None:
