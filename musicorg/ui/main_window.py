@@ -31,14 +31,16 @@ from musicorg.ui.widgets.status_strip import StatusStrip
 
 if TYPE_CHECKING:
     from musicorg.config.settings import AppSettings
+    from musicorg.ui.themes.service import ThemeService
 
 
 class MainWindow(QMainWindow):
     """Main application window with sidebar navigation."""
 
-    def __init__(self, settings: AppSettings) -> None:
+    def __init__(self, settings: AppSettings, theme_service: ThemeService | None = None) -> None:
         super().__init__()
         self._settings = settings
+        self._theme_service = theme_service
         self._tag_editor_action: QAction | None = None
         self._autotag_action: QAction | None = None
         self._artwork_action: QAction | None = None
@@ -271,10 +273,12 @@ class MainWindow(QMainWindow):
         self._send_to_artwork(selected_paths)
 
     def _open_settings(self) -> None:
-        dialog = SettingsDialog(self._settings, self)
+        dialog = SettingsDialog(self._settings, theme_service=self._theme_service, parent=self)
         if dialog.exec():
             self._autotag_panel.set_discogs_token(self._settings.discogs_token)
             self._artwork_downloader_panel.set_discogs_token(self._settings.discogs_token)
+            if self._theme_service is not None:
+                _ok, _message = self._theme_service.apply_theme(self._settings.theme_id, persist=True)
             # Re-apply settings
             if self._settings.source_dir:
                 self._source_panel.set_source_dir(self._settings.source_dir)

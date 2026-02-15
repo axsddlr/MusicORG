@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Mapping
+
 # Theme tokens are centralized to keep visual decisions consistent.
 TOKENS = {
     "canvas": "#0e1015",
@@ -28,6 +30,9 @@ FONTS = {
     "display": '"Bahnschrift", "Segoe UI Semibold", "Segoe UI", sans-serif',
     "icon": '"Segoe Fluent Icons", "Segoe MDL2 Assets", "Segoe UI Symbol", sans-serif',
 }
+
+DEFAULT_TOKENS = dict(TOKENS)
+DEFAULT_FONTS = dict(FONTS)
 
 BASE_STYLES = f"""
 QWidget {{
@@ -537,3 +542,32 @@ APP_STYLESHEET = "\n".join(
         SCROLLBAR_STYLES,
     ]
 )
+
+
+def build_stylesheet(
+    *,
+    tokens: Mapping[str, str] | None = None,
+    fonts: Mapping[str, str] | None = None,
+    extra_stylesheet: str = "",
+) -> str:
+    """Build the application stylesheet with token/font overrides."""
+    resolved_tokens = dict(DEFAULT_TOKENS)
+    for key, value in (tokens or {}).items():
+        if key in resolved_tokens and isinstance(value, str) and value:
+            resolved_tokens[key] = value
+
+    resolved_fonts = dict(DEFAULT_FONTS)
+    for key, value in (fonts or {}).items():
+        if key in resolved_fonts and isinstance(value, str) and value:
+            resolved_fonts[key] = value
+
+    stylesheet = APP_STYLESHEET
+    for key, default_value in DEFAULT_TOKENS.items():
+        stylesheet = stylesheet.replace(default_value, resolved_tokens[key])
+    for key, default_value in DEFAULT_FONTS.items():
+        stylesheet = stylesheet.replace(default_value, resolved_fonts[key])
+
+    extra = extra_stylesheet.strip()
+    if extra:
+        stylesheet = f"{stylesheet}\n\n{extra}\n"
+    return stylesheet

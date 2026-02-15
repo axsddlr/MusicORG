@@ -57,7 +57,7 @@ class AppSettings:
 
     @property
     def tag_cache_db_path(self) -> str:
-        return str(self._app_data_dir() / "tag_cache.db")
+        return str(self.app_data_dir / "tag_cache.db")
 
     # -- backdrop opacity --
 
@@ -68,6 +68,30 @@ class AppSettings:
     @backdrop_opacity.setter
     def backdrop_opacity(self, value: float) -> None:
         self._qs.setValue("ui/backdrop_opacity", value)
+
+    # -- theme --
+
+    @property
+    def theme_id(self) -> str:
+        raw = self._qs.value("ui/theme_id", "musicorg-default", type=str)
+        value = (raw or "").strip()
+        return value or "musicorg-default"
+
+    @theme_id.setter
+    def theme_id(self, value: str) -> None:
+        cleaned = (value or "").strip() or "musicorg-default"
+        self._qs.setValue("ui/theme_id", cleaned)
+
+    @property
+    def theme_last_known_good_id(self) -> str:
+        raw = self._qs.value("ui/theme_last_known_good_id", "musicorg-default", type=str)
+        value = (raw or "").strip()
+        return value or "musicorg-default"
+
+    @theme_last_known_good_id.setter
+    def theme_last_known_good_id(self, value: str) -> None:
+        cleaned = (value or "").strip() or "musicorg-default"
+        self._qs.setValue("ui/theme_last_known_good_id", cleaned)
 
     # -- album artwork selection mode --
 
@@ -122,6 +146,18 @@ class AppSettings:
         self._qs.setValue("ui/window_geometry", value)
 
     # -- helpers --
+
+    @property
+    def app_data_dir(self) -> Path:
+        path = self._app_data_dir()
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def themes_dir(self) -> Path:
+        path = self.app_data_dir / "themes"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     @staticmethod
     def _app_data_dir() -> Path:
