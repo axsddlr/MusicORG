@@ -66,6 +66,7 @@ Thumbs.db
 *.png
 !musicorg/ui/assets/musicorg.png
 AGENTS.md
+CLAUDE.md
 
 # Local plugin runtime bundle (binary/vendor artifacts)
 musicorg/plugins/
