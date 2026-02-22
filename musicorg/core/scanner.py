@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-AUDIO_EXTENSIONS = {".mp3", ".flac"}
+AUDIO_EXTENSIONS = {".mp3", ".flac", ".m4a", ".ogg", ".opus", ".wav", ".aiff", ".wv"}
 
 
 @dataclass
@@ -25,7 +25,7 @@ class AudioFile:
 
 
 class FileScanner:
-    """Scans a directory tree for MP3/FLAC files."""
+    """Scans a directory tree for audio files."""
 
     def __init__(self, root: str | Path) -> None:
         self._root = Path(root)

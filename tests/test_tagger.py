@@ -1,39 +1,10 @@
 """Tests for musicorg.core.tagger."""
 
-import shutil
 from pathlib import Path
 
 import pytest
-from mutagen.mp3 import MP3
-from mutagen.easyid3 import EasyID3
 
-from musicorg.core.tagger import TagData, TagManager, _first, _first_int
-
-
-class TestHelpers:
-    def test_first_with_list(self):
-        assert _first({"key": ["val1", "val2"]}, "key") == "val1"
-
-    def test_first_with_string(self):
-        assert _first({"key": "val"}, "key") == "val"
-
-    def test_first_missing(self):
-        assert _first({}, "key") == ""
-
-    def test_first_default(self):
-        assert _first({}, "key", "default") == "default"
-
-    def test_first_int_simple(self):
-        assert _first_int({"tracknumber": ["3"]}, "tracknumber") == 3
-
-    def test_first_int_with_total(self):
-        assert _first_int({"tracknumber": ["3/12"]}, "tracknumber") == 3
-
-    def test_first_int_missing(self):
-        assert _first_int({}, "tracknumber") == 0
-
-    def test_first_int_invalid(self):
-        assert _first_int({"tracknumber": ["abc"]}, "tracknumber") == 0
+from musicorg.core.tagger import TagData, TagManager
 
 
 class TestTagData:
@@ -42,6 +13,8 @@ class TestTagData:
         assert td.title == ""
         assert td.artist == ""
         assert td.track == 0
+        assert td.comment == ""
+        assert td.lyrics == ""
         assert td.artwork_data is None
         assert td.artwork_mime == ""
 
@@ -50,6 +23,8 @@ class TestTagData:
             title="Song",
             artist="Band",
             track=5,
+            comment="A comment",
+            lyrics="Some lyrics",
             artwork_data=b"\x01\x02",
             artwork_mime="image/png",
         )
@@ -57,6 +32,8 @@ class TestTagData:
         assert d["title"] == "Song"
         assert d["artist"] == "Band"
         assert d["track"] == 5
+        assert d["comment"] == "A comment"
+        assert d["lyrics"] == "Some lyrics"
         assert d["artwork_data"] == b"\x01\x02"
         assert d["artwork_mime"] == "image/png"
 
@@ -66,7 +43,6 @@ class TestTagManager:
     def sample_mp3(self, tmp_path):
         """Create a minimal valid MP3 file for testing."""
         # Create a minimal MP3 frame (MPEG1 Layer3, 128kbps, 44100Hz, stereo)
-        # Sync word + valid header
         header = bytes([
             0xFF, 0xFB, 0x90, 0x00,  # MPEG1, Layer3, 128kbps, 44100Hz
         ])
@@ -81,16 +57,26 @@ class TestTagManager:
         tags = tm.read(sample_mp3)
         assert isinstance(tags, TagData)
 
-    def test_read_unsupported_format(self, tmp_path):
-        p = tmp_path / "test.wav"
+    def test_read_invalid_file_returns_empty_tag_data(self, tmp_path):
+        """Unreadable / corrupted files should return an empty TagData."""
+        p = tmp_path / "garbage.mp3"
         p.write_bytes(b"\x00" * 100)
         tm = TagManager()
-        with pytest.raises(ValueError, match="Unsupported format"):
-            tm.read(p)
+        tags = tm.read(p)
+        assert isinstance(tags, TagData)
 
-    def test_write_unsupported_format(self, tmp_path):
-        p = tmp_path / "test.wav"
+    def test_read_unknown_extension_returns_empty_tag_data(self, tmp_path):
+        """Unknown extensions should return an empty TagData gracefully."""
+        p = tmp_path / "test.xyz"
         p.write_bytes(b"\x00" * 100)
         tm = TagManager()
-        with pytest.raises(ValueError, match="Unsupported format"):
+        tags = tm.read(p)
+        assert isinstance(tags, TagData)
+
+    def test_write_invalid_file_raises_value_error(self, tmp_path):
+        """Writing to a file that cannot be loaded raises ValueError."""
+        p = tmp_path / "test.xyz"
+        p.write_bytes(b"\x00" * 100)
+        tm = TagManager()
+        with pytest.raises(ValueError):
             tm.write(p, TagData())

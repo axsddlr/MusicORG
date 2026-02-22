@@ -8,8 +8,8 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QMessageBox, QSpinBox, QWidget,
+    QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
+    QPushButton, QMessageBox, QSpinBox, QWidget,
 )
 
 from musicorg.core.tagger import TagData
@@ -35,6 +35,9 @@ class TagForm(QWidget):
         self.year_spin.setRange(0, 9999)
         self.genre_edit = QLineEdit()
         self.composer_edit = QLineEdit()
+        self.comment_edit = QLineEdit()
+        self.lyrics_edit = QPlainTextEdit()
+        self.lyrics_edit.setFixedHeight(80)
         self._artwork_data: bytes = b""
         self._artwork_mime: str = ""
         self._artwork_modified = False
@@ -67,6 +70,8 @@ class TagForm(QWidget):
         layout.addRow("Year:", self.year_spin)
         layout.addRow("Genre:", self.genre_edit)
         layout.addRow("Composer:", self.composer_edit)
+        layout.addRow("Comment:", self.comment_edit)
+        layout.addRow("Lyrics:", self.lyrics_edit)
         layout.addRow("Artwork:", artwork_widget)
 
     def set_tags(self, tags: TagData) -> None:
@@ -79,6 +84,8 @@ class TagForm(QWidget):
         self.year_spin.setValue(tags.year)
         self.genre_edit.setText(tags.genre)
         self.composer_edit.setText(tags.composer)
+        self.comment_edit.setText(tags.comment)
+        self.lyrics_edit.setPlainText(tags.lyrics)
         self._artwork_data = tags.artwork_data or b""
         self._artwork_mime = tags.artwork_mime or ""
         self._artwork_modified = False
@@ -95,6 +102,8 @@ class TagForm(QWidget):
             year=self.year_spin.value(),
             genre=self.genre_edit.text(),
             composer=self.composer_edit.text(),
+            comment=self.comment_edit.text(),
+            lyrics=self.lyrics_edit.toPlainText(),
             artwork_data=self._artwork_data,
             artwork_mime=self._artwork_mime,
         )
@@ -109,6 +118,8 @@ class TagForm(QWidget):
         self.year_spin.setValue(0)
         self.genre_edit.clear()
         self.composer_edit.clear()
+        self.comment_edit.clear()
+        self.lyrics_edit.clear()
         self._artwork_data = b""
         self._artwork_mime = ""
         self._artwork_modified = False
@@ -116,6 +127,8 @@ class TagForm(QWidget):
 
     def set_enabled(self, enabled: bool) -> None:
         for child in self.findChildren(QLineEdit):
+            child.setEnabled(enabled)
+        for child in self.findChildren(QPlainTextEdit):
             child.setEnabled(enabled)
         for child in self.findChildren(QSpinBox):
             child.setEnabled(enabled)

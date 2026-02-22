@@ -73,4 +73,10 @@ class TestFileScanner:
     def test_audio_extensions(self):
         assert ".mp3" in AUDIO_EXTENSIONS
         assert ".flac" in AUDIO_EXTENSIONS
-        assert ".wav" not in AUDIO_EXTENSIONS
+        assert ".m4a" in AUDIO_EXTENSIONS
+        assert ".ogg" in AUDIO_EXTENSIONS
+        assert ".opus" in AUDIO_EXTENSIONS
+        assert ".wav" in AUDIO_EXTENSIONS
+        assert ".aiff" in AUDIO_EXTENSIONS
+        assert ".wv" in AUDIO_EXTENSIONS
+        assert ".pdf" not in AUDIO_EXTENSIONS

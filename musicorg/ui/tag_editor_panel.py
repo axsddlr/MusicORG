@@ -37,6 +37,8 @@ class TagEditorPanel(QDialog):
         "year",
         "genre",
         "composer",
+        "comment",
+        "lyrics",
     )
     _FIELD_LABELS = {
         "title": "Title",
@@ -48,6 +50,8 @@ class TagEditorPanel(QDialog):
         "year": "Year",
         "genre": "Genre",
         "composer": "Composer",
+        "comment": "Comment",
+        "lyrics": "Lyrics",
     }
 
     def __init__(self, parent: QWidget | None = None) -> None:

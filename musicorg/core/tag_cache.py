@@ -25,7 +25,9 @@ CREATE TABLE IF NOT EXISTS tag_cache (
     duration     REAL    NOT NULL DEFAULT 0.0,
     bitrate      INTEGER NOT NULL DEFAULT 0,
     artwork_data BLOB,
-    artwork_mime TEXT    NOT NULL DEFAULT ''
+    artwork_mime TEXT    NOT NULL DEFAULT '',
+    comment      TEXT    NOT NULL DEFAULT '',
+    lyrics       TEXT    NOT NULL DEFAULT ''
 );
 """
 
@@ -46,13 +48,16 @@ class TagCache:
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
         conn.execute(SCHEMA_SQL)
-        # Migrate existing DBs: add bitrate column if missing
-        try:
-            conn.execute(
-                "ALTER TABLE tag_cache ADD COLUMN bitrate INTEGER NOT NULL DEFAULT 0"
-            )
-        except sqlite3.OperationalError:
-            pass  # Column already exists
+        # Migrate existing DBs: add missing columns
+        for col_def in (
+            "bitrate INTEGER NOT NULL DEFAULT 0",
+            "comment TEXT NOT NULL DEFAULT ''",
+            "lyrics TEXT NOT NULL DEFAULT ''",
+        ):
+            try:
+                conn.execute(f"ALTER TABLE tag_cache ADD COLUMN {col_def}")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
         conn.commit()
         self._conn = conn
 
@@ -70,7 +75,8 @@ class TagCache:
             SELECT
                 title, artist, album, albumartist,
                 track, disc, year, genre, composer,
-                duration, bitrate, artwork_data, artwork_mime
+                duration, bitrate, artwork_data, artwork_mime,
+                comment, lyrics
             FROM tag_cache
             WHERE path = ? AND mtime_ns = ? AND size = ?
             """,
@@ -93,6 +99,8 @@ class TagCache:
             bitrate=int(row[10] or 0),
             artwork_data=bytes(artwork) if artwork is not None else None,
             artwork_mime=str(row[12] or ""),
+            comment=str(row[13] or ""),
+            lyrics=str(row[14] or ""),
         )
 
     def put(self, path: str | Path, mtime_ns: int, size: int, tags: TagData) -> None:
@@ -122,6 +130,8 @@ class TagCache:
                 int(tags.bitrate),
                 tags.artwork_data,
                 tags.artwork_mime,
+                tags.comment,
+                tags.lyrics,
             )
             for path, mtime_ns, size, tags in entries
         ]
@@ -134,9 +144,10 @@ class TagCache:
                 path, mtime_ns, size,
                 title, artist, album, albumartist,
                 track, disc, year, genre, composer,
-                duration, bitrate, artwork_data, artwork_mime
+                duration, bitrate, artwork_data, artwork_mime,
+                comment, lyrics
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
                 mtime_ns = excluded.mtime_ns,
                 size = excluded.size,
@@ -152,7 +163,9 @@ class TagCache:
                 duration = excluded.duration,
                 bitrate = excluded.bitrate,
                 artwork_data = excluded.artwork_data,
-                artwork_mime = excluded.artwork_mime
+                artwork_mime = excluded.artwork_mime,
+                comment = excluded.comment,
+                lyrics = excluded.lyrics
             """,
             rows,
         )

@@ -1,17 +1,12 @@
-"""Read/write ID3 tags via mutagen."""
+"""Read/write audio tags via music-tag."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import re
 from typing import Any
 
-import mutagen
-from mutagen.easyid3 import EasyID3
-from mutagen.flac import FLAC, Picture
-from mutagen.id3 import APIC
-from mutagen.mp3 import MP3
+import music_tag
 
 
 @dataclass
@@ -26,6 +21,8 @@ class TagData:
     year: int = 0
     genre: str = ""
     composer: str = ""
+    comment: str = ""
+    lyrics: str = ""
     duration: float = 0.0
     bitrate: int = 0
     artwork_data: bytes | None = None
@@ -42,6 +39,8 @@ class TagData:
             "year": self.year,
             "genre": self.genre,
             "composer": self.composer,
+            "comment": self.comment,
+            "lyrics": self.lyrics,
             "duration": self.duration,
             "bitrate": self.bitrate,
             "artwork_data": self.artwork_data,
@@ -49,206 +48,101 @@ class TagData:
         }
 
 
-def _first(tags: dict, key: str, default: str = "") -> str:
-    """Get first value from a tag list, or default."""
-    val = tags.get(key)
-    if val and isinstance(val, list):
-        return str(val[0])
-    if val:
-        return str(val)
-    return default
-
-
-def _first_int(tags: dict, key: str, default: int = 0) -> int:
-    """Get first integer value from a tag list."""
-    raw = _first(tags, key, "")
-    if not raw:
-        return default
-    # Handle "3/12" style track numbers
-    raw = raw.split("/")[0]
+def _str(f: Any, key: str) -> str:
     try:
-        return int(raw)
-    except ValueError:
-        return default
+        val = f[key].first
+        return str(val) if val is not None else ""
+    except Exception:
+        return ""
 
 
-def _first_id3(tags: Any, frame_id: str, default: str = "") -> str:
-    """Get first text value from a raw ID3 frame."""
-    if tags is None:
-        return default
-    frame = tags.get(frame_id)
-    if frame is None:
-        return default
-    text = getattr(frame, "text", None)
-    if text and len(text) > 0:
-        return str(text[0])
-    return default
-
-
-def _int_id3(tags: Any, frame_id: str, default: int = 0) -> int:
-    """Get first integer value from a raw ID3 frame."""
-    raw = _first_id3(tags, frame_id, "")
-    if not raw:
-        return default
-    # Handle values like "3/12", "2020-05-01", and mixed text/date frames.
-    raw = raw.split("/", 1)[0]
-    match = re.search(r"\d+", raw)
-    if not match:
-        return default
+def _int(f: Any, key: str) -> int:
     try:
-        return int(match.group(0))
-    except ValueError:
-        return default
+        val = f[key].first
+        if val is None:
+            return 0
+        return int(val)
+    except Exception:
+        return 0
+
+
+def _float(f: Any, key: str) -> float:
+    try:
+        val = f[key].first
+        if val is None:
+            return 0.0
+        return float(val)
+    except Exception:
+        return 0.0
 
 
 class TagManager:
-    """Reads and writes tags for MP3 and FLAC files using mutagen."""
+    """Reads and writes tags for audio files using music-tag."""
 
     def read(self, path: str | Path) -> TagData:
         """Read tags from an audio file."""
-        path = Path(path)
-        ext = path.suffix.lower()
-        if ext == ".mp3":
-            return self._read_mp3(path)
-        elif ext == ".flac":
-            return self._read_flac(path)
-        else:
-            raise ValueError(f"Unsupported format: {ext}")
+        try:
+            f = music_tag.load_file(str(path))
+        except Exception:
+            return TagData()
+
+        artwork_data: bytes | None = None
+        artwork_mime = ""
+        try:
+            aw = f["artwork"].first
+            if aw is not None:
+                artwork_data = bytes(aw.raw_thumbnail)
+                artwork_mime = str(aw.mime_type or "")
+        except Exception:
+            pass
+
+        return TagData(
+            title=_str(f, "tracktitle"),
+            artist=_str(f, "artist"),
+            album=_str(f, "album"),
+            albumartist=_str(f, "albumartist"),
+            track=_int(f, "tracknumber"),
+            disc=_int(f, "discnumber"),
+            year=_int(f, "year"),
+            genre=_str(f, "genre"),
+            composer=_str(f, "composer"),
+            comment=_str(f, "comment"),
+            lyrics=_str(f, "lyrics"),
+            duration=_float(f, "#length"),
+            bitrate=_int(f, "#bitrate"),
+            artwork_data=artwork_data,
+            artwork_mime=artwork_mime,
+        )
 
     def write(self, path: str | Path, tags: TagData) -> None:
         """Write tags to an audio file."""
-        path = Path(path)
-        ext = path.suffix.lower()
-        if ext == ".mp3":
-            self._write_mp3(path, tags)
-        elif ext == ".flac":
-            self._write_flac(path, tags)
-        else:
-            raise ValueError(f"Unsupported format: {ext}")
-
-    # -- MP3 --
-
-    def _read_mp3(self, path: Path) -> TagData:
         try:
-            audio = MP3(path)
-        except mutagen.MutagenError:
-            return TagData()
-        tags = audio.tags
-        duration = getattr(audio.info, "length", 0.0) or 0.0
-        bitrate = getattr(audio.info, "bitrate", 0) or 0
-        artwork_data = b""
-        artwork_mime = ""
-        if tags:
-            pictures = tags.getall("APIC")
-            if pictures:
-                picture = pictures[0]
-                artwork_data = bytes(getattr(picture, "data", b""))
-                artwork_mime = str(getattr(picture, "mime", "") or "")
-        return TagData(
-            title=_first_id3(tags, "TIT2"),
-            artist=_first_id3(tags, "TPE1"),
-            album=_first_id3(tags, "TALB"),
-            albumartist=_first_id3(tags, "TPE2"),
-            track=_int_id3(tags, "TRCK"),
-            disc=_int_id3(tags, "TPOS"),
-            year=_int_id3(tags, "TDRC") or _int_id3(tags, "TYER"),
-            genre=_first_id3(tags, "TCON"),
-            composer=_first_id3(tags, "TCOM"),
-            duration=duration,
-            bitrate=bitrate,
-            artwork_data=artwork_data,
-            artwork_mime=artwork_mime,
-        )
+            f = music_tag.load_file(str(path))
+        except Exception as exc:
+            raise ValueError(f"Cannot open file for writing: {path}") from exc
 
-    def _write_mp3(self, path: Path, tags: TagData) -> None:
-        try:
-            audio = MP3(path, ID3=EasyID3)
-        except mutagen.MutagenError:
-            audio = MP3(path)
-            audio.add_tags()
-            audio.save()
-            audio = MP3(path, ID3=EasyID3)
-        audio["title"] = tags.title
-        audio["artist"] = tags.artist
-        audio["album"] = tags.album
-        audio["albumartist"] = tags.albumartist
-        audio["tracknumber"] = str(tags.track)
-        audio["discnumber"] = str(tags.disc)
-        audio["date"] = str(tags.year) if tags.year else ""
-        audio["genre"] = tags.genre
-        audio["composer"] = tags.composer
-        audio.save()
+        f["tracktitle"] = tags.title
+        f["artist"] = tags.artist
+        f["album"] = tags.album
+        f["albumartist"] = tags.albumartist
+        f["tracknumber"] = tags.track
+        f["discnumber"] = tags.disc
+        f["year"] = tags.year
+        f["genre"] = tags.genre
+        f["composer"] = tags.composer
+        f["comment"] = tags.comment
+        f["lyrics"] = tags.lyrics
 
-        try:
-            raw_audio = MP3(path)
-        except mutagen.MutagenError:
-            return
-        if raw_audio.tags is None:
-            raw_audio.add_tags()
         if tags.artwork_data is not None:
-            raw_audio.tags.delall("APIC")
-            if tags.artwork_data:
-                raw_audio.tags.add(APIC(
-                    encoding=3,  # UTF-8
-                    mime=tags.artwork_mime or "image/jpeg",
-                    type=3,  # Cover (front)
-                    desc="Cover",
-                    data=tags.artwork_data,
-                ))
-            raw_audio.save(v2_version=3)
+            try:
+                if tags.artwork_data:
+                    f["artwork"] = music_tag.Artwork(
+                        raw=tags.artwork_data,
+                        mime_type=tags.artwork_mime or "image/jpeg",
+                    )
+                else:
+                    f["artwork"] = None
+            except Exception:
+                pass
 
-    # -- FLAC --
-
-    def _read_flac(self, path: Path) -> TagData:
-        try:
-            audio = FLAC(path)
-        except mutagen.MutagenError:
-            return TagData()
-        tags = dict(audio.tags or {})
-        duration = getattr(audio.info, "length", 0.0) or 0.0
-        bitrate = getattr(audio.info, "bitrate", 0) or 0
-        artwork_data = b""
-        artwork_mime = ""
-        if audio.pictures:
-            picture = audio.pictures[0]
-            artwork_data = bytes(getattr(picture, "data", b""))
-            artwork_mime = str(getattr(picture, "mime", "") or "")
-        return TagData(
-            title=_first(tags, "title"),
-            artist=_first(tags, "artist"),
-            album=_first(tags, "album"),
-            albumartist=_first(tags, "albumartist"),
-            track=_first_int(tags, "tracknumber"),
-            disc=_first_int(tags, "discnumber"),
-            year=_first_int(tags, "date"),
-            genre=_first(tags, "genre"),
-            composer=_first(tags, "composer"),
-            duration=duration,
-            bitrate=bitrate,
-            artwork_data=artwork_data,
-            artwork_mime=artwork_mime,
-        )
-
-    def _write_flac(self, path: Path, tags: TagData) -> None:
-        try:
-            audio = FLAC(path)
-        except mutagen.MutagenError:
-            return
-        audio["title"] = tags.title
-        audio["artist"] = tags.artist
-        audio["album"] = tags.album
-        audio["albumartist"] = tags.albumartist
-        audio["tracknumber"] = str(tags.track)
-        audio["discnumber"] = str(tags.disc)
-        audio["date"] = str(tags.year) if tags.year else ""
-        audio["genre"] = tags.genre
-        audio["composer"] = tags.composer
-        if tags.artwork_data is not None:
-            audio.clear_pictures()
-            if tags.artwork_data:
-                picture = Picture()
-                picture.type = 3  # Cover (front)
-                picture.mime = tags.artwork_mime or "image/jpeg"
-                picture.data = tags.artwork_data
-                audio.add_picture(picture)
-        audio.save()
+        f.save()
