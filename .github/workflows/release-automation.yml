@@ -33,14 +33,15 @@ jobs:
 
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "Release already exists for $tag"
-            exit 0
+          else
+            if [[ -f "$notes_file" ]]; then
+              gh release create "$tag" --title "$tag" --notes-file "$notes_file"
+            else
+              gh release create "$tag" --title "$tag" --generate-notes
+            fi
           fi
 
-          if [[ -f "$notes_file" ]]; then
-            gh release create "$tag" --title "$tag" --notes-file "$notes_file"
-          else
-            gh release create "$tag" --title "$tag" --generate-notes
-          fi
+          gh workflow run windows-exe-release.yml --ref "$tag"
 
   release-on-version-commit:
     if: github.ref == 'refs/heads/master'
