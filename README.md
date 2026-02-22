@@ -5,12 +5,12 @@
 <h1 align="center">MusicOrg</h1>
 
 <p align="center">
-  PySide6 desktop app for music library management (MP3/FLAC).
+  PySide6 desktop app for music library management.
 </p>
 
 ## Overview
 MusicOrg is a desktop workflow for:
-- Scanning source folders for `.mp3` and `.flac` files
+- Scanning source folders for `.mp3`, `.flac`, `.m4a`, `.ogg`, `.opus`, `.wav`, `.aiff`, and `.wv` files
 - Viewing and editing tags (including embedded artwork)
 - Auto-tagging from MusicBrainz and Discogs
 - Exploring library content by artist and album
@@ -95,7 +95,20 @@ musicorg/
 `-- tests/           # unit tests
 ```
 
+## Libraries
+
+| Library | Version | Purpose |
+|---|---|---|
+| [PySide6](https://doc.qt.io/qtforpython/) | `>=6.6.0` | Qt-based UI framework |
+| [music-tag](https://github.com/KristoforMaynard/music-tag) | `>=0.4.3` | Unified audio tag read/write (MP3, FLAC, M4A, OGG, OPUS, WAV, AIFF, WV) |
+| [mutagen](https://mutagen.readthedocs.io/) | `>=1.47.0` | Low-level audio metadata (used internally by music-tag) |
+| [musicbrainzngs](https://python-musicbrainzngs.readthedocs.io/) | `>=0.7.1` | MusicBrainz metadata lookup for auto-tagging |
+| [python3-discogs-client](https://github.com/discogs/discogs_client) | `>=2.3.15` | Discogs metadata lookup for auto-tagging |
+| [send2trash](https://github.com/arsenetar/send2trash) | `>=1.8.0` | Safe file deletion to system trash *(optional)* |
+
+**Dev dependencies:** `pytest>=8.0`, `pytest-qt>=4.4`
+
 ## Notes
-- Supported audio formats: `.mp3`, `.flac`
+- Supported audio formats: `.mp3`, `.flac`, `.m4a`, `.ogg`, `.opus`, `.wav`, `.aiff`, `.wv`
 - Sync is non-destructive copy (source files are not moved/deleted)
 - Tools menu actions are enabled only when at least one file is selected
