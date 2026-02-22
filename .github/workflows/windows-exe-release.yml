@@ -1,8 +1,9 @@
 name: Windows EXE Build
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
 
 permissions:
@@ -25,7 +26,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install --no-deps .
-          pip install pyinstaller==6.19.0 PySide6-Essentials==6.10.2 musicbrainzngs>=0.7.1 python3-discogs-client>=2.3.15 mutagen>=1.47.0 send2trash>=1.8.0
+          pip install pyinstaller==6.19.0 PySide6-Essentials==6.10.2 musicbrainzngs>=0.7.1 python3-discogs-client>=2.3.15 mutagen>=1.47.0 music-tag>=0.4.3 send2trash>=1.8.0
 
       - name: Build executable
         shell: pwsh
@@ -73,14 +74,15 @@ jobs:
         id: package
         shell: pwsh
         run: |
-          $tag = "${{ github.event.release.tag_name }}"
-          if (-not $tag) {
+          $tag = "${{ github.ref_name }}"
+          if (-not $tag -or $tag -eq "") {
             $tag = "manual-${{ github.run_number }}"
           }
           $assetName = "MusicOrg-$tag-windows-x64-onefile.zip"
           if (Test-Path $assetName) { Remove-Item $assetName -Force }
           Compress-Archive -Path "dist/MusicOrg-OneFile.exe" -DestinationPath $assetName
           "asset_name=$assetName" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -89,10 +91,28 @@ jobs:
           path: ${{ steps.package.outputs.asset_name }}
           if-no-files-found: error
 
+      - name: Wait for release to exist
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          tag="${{ steps.package.outputs.tag }}"
+          for i in $(seq 1 12); do
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "Release $tag found."
+              exit 0
+            fi
+            echo "Waiting for release $tag... attempt $i/12"
+            sleep 10
+          done
+          echo "Release $tag not found after 2 minutes, creating it."
+          gh release create "$tag" --title "$tag" --generate-notes
+
       - name: Upload artifact to GitHub release
-        if: github.event_name == 'release'
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
         run: |
-          gh release upload "${{ github.event.release.tag_name }}" "${{ steps.package.outputs.asset_name }}" --clobber
+          gh release upload "${{ steps.package.outputs.tag }}" "${{ steps.package.outputs.asset_name }}" --clobber
