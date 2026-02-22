@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "musicorg"
-version = "0.7.1"
+version = "0.7.2"
 description = "PySide6 desktop UI for music library management"
 requires-python = ">=3.10"
 dependencies = [
