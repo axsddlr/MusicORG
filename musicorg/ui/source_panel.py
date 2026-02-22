@@ -499,7 +499,12 @@ class SourcePanel(QWidget):
                     row.tags.artwork_mime = ""
 
     def _populate_artist_list(self) -> None:
-        self._all_artists = sorted(self._library_index)
+        _UNKNOWN = "Unknown Artist"
+        sorted_artists = sorted(self._library_index)
+        if _UNKNOWN in self._library_index:
+            sorted_artists.remove(_UNKNOWN)
+            sorted_artists.insert(0, _UNKNOWN)
+        self._all_artists = sorted_artists
         for artist in self._all_artists:
             albums = self._library_index[artist]
             album_count = len(albums)
