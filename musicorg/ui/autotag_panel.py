@@ -74,7 +74,6 @@ class AutoTagPanel(QDialog):
         search_btn_layout.setContentsMargins(0, 2, 0, 0)
         search_btn_layout.setSpacing(6)
         self._search_btn = QPushButton("Search Album")
-        self._search_btn.setProperty("role", "accent")
         self._search_btn.setEnabled(False)
         self._search_btn.clicked.connect(self._start_search)
         self._search_single_btn = QPushButton("Search Single")
@@ -251,18 +250,22 @@ class AutoTagPanel(QDialog):
         search_thread.start()
 
     def _on_search_done(self, payload: object) -> None:
-        candidates, source_errors, source_counts = self._coerce_search_payload(payload)
-        self._match_list.match_model.set_candidates(candidates)
-        self._search_in_progress = False
-        self._refresh_search_controls()
-        self._set_source_status(source_counts, source_errors, candidates)
-        count = len(candidates)
-        if source_errors:
-            self._progress.finish(
-                f"Found {count} candidate(s) ({self._format_source_errors(source_errors)})"
-            )
-        else:
-            self._progress.finish(f"Found {count} candidate(s)")
+        try:
+            candidates, source_errors, source_counts = self._coerce_search_payload(payload)
+            self._match_list.match_model.set_candidates(candidates)
+            self._set_source_status(source_counts, source_errors, candidates)
+            count = len(candidates)
+            if source_errors:
+                self._progress.finish(
+                    f"Found {count} candidate(s) ({self._format_source_errors(source_errors)})"
+                )
+            else:
+                self._progress.finish(f"Found {count} candidate(s)")
+        except Exception as exc:
+            self._progress.finish(f"Error processing results: {exc}")
+        finally:
+            self._search_in_progress = False
+            self._refresh_search_controls()
 
     def _on_search_progress(self, current: int, total: int, message: str) -> None:
         self._progress.update_progress(current, total, message)
@@ -275,13 +278,27 @@ class AutoTagPanel(QDialog):
         QMessageBox.critical(self, "Search Error", error_message)
 
     def _refresh_search_controls(self) -> None:
+        single_file = len(self._files) == 1
         if self._search_in_progress:
             self._search_btn.setEnabled(False)
             self._search_single_btn.setEnabled(False)
-            return
-        has_loaded_files = bool(self._files)
-        self._search_btn.setEnabled(has_loaded_files)
-        self._search_single_btn.setEnabled(len(self._files) == 1)
+        else:
+            self._search_btn.setEnabled(bool(self._files))
+            self._search_single_btn.setEnabled(single_file)
+
+        # Swap accent: single file → "Search Single" is the primary action
+        album_role = "" if single_file else "accent"
+        single_role = "accent" if single_file else ""
+        if self._search_btn.property("role") != album_role:
+            self._search_btn.setProperty("role", album_role)
+            self._search_btn.style().unpolish(self._search_btn)
+            self._search_btn.style().polish(self._search_btn)
+            self._search_btn.update()
+        if self._search_single_btn.property("role") != single_role:
+            self._search_single_btn.setProperty("role", single_role)
+            self._search_single_btn.style().unpolish(self._search_single_btn)
+            self._search_single_btn.style().polish(self._search_single_btn)
+            self._search_single_btn.update()
 
     @staticmethod
     def _format_source_errors(source_errors: dict[str, str]) -> str:
@@ -381,12 +398,14 @@ class AutoTagPanel(QDialog):
         self._apply_thread.start()
 
     def _on_apply_done(self, success: bool) -> None:
-        if success:
-            self._progress.finish("Tags applied successfully")
-            self.tags_applied.emit()
-        else:
-            self._progress.finish("Failed to apply tags")
-        self._apply_btn.setEnabled(True)
+        try:
+            if success:
+                self._progress.finish("Tags applied successfully")
+                self.tags_applied.emit()
+            else:
+                self._progress.finish("Failed to apply tags")
+        finally:
+            self._apply_btn.setEnabled(True)
 
     def _on_apply_progress(self, current: int, total: int, message: str) -> None:
         self._progress.update_progress(current, total, message)

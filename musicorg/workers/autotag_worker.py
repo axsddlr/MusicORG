@@ -69,6 +69,10 @@ class AutoTagWorker(BaseWorker):
             self.finished.emit(search_payload)
         except Exception as exc:
             self.error.emit(str(exc))
+        except BaseException as exc:
+            # Catch SystemExit / KeyboardInterrupt so the UI is never left stuck
+            self.error.emit(str(exc) or type(exc).__name__)
+            raise
 
 
 class ApplyMatchWorker(BaseWorker):
@@ -112,3 +116,6 @@ class ApplyMatchWorker(BaseWorker):
             self.finished.emit(applied_successfully)
         except Exception as exc:
             self.error.emit(str(exc))
+        except BaseException as exc:
+            self.error.emit(str(exc) or type(exc).__name__)
+            raise
