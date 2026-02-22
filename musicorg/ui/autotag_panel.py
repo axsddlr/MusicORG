@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import cast
 
 from PySide6.QtCore import QThread, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QMessageBox, QPushButton, QSplitter, QTableWidget, QTableWidgetItem,
@@ -18,6 +19,7 @@ from PySide6.QtCore import Qt
 from musicorg.core.autotagger import MatchCandidate
 from musicorg.ui.widgets.match_list import MatchList
 from musicorg.ui.widgets.progress_bar import ProgressIndicator
+from musicorg.workers.artwork_worker import ArtworkPreviewWorker
 from musicorg.workers.autotag_worker import ApplyMatchWorker, AutoTagWorker, SearchMode
 
 
@@ -36,6 +38,9 @@ class AutoTagPanel(QDialog):
         self._search_in_progress = False
         self._apply_worker: ApplyMatchWorker | None = None
         self._apply_thread: QThread | None = None
+        self._preview_worker: ArtworkPreviewWorker | None = None
+        self._preview_thread: QThread | None = None
+        self._preview_request_id: int = 0
         self._cache_db_path = ""
         self._discogs_token = ""
 
@@ -132,6 +137,19 @@ class AutoTagPanel(QDialog):
         track_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         track_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         track_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        artwork_row = QHBoxLayout()
+        artwork_row.setContentsMargins(0, 0, 0, 4)
+        artwork_row.setSpacing(8)
+        self._artwork_preview = QLabel("No Preview")
+        self._artwork_preview.setObjectName("AlbumCover")
+        self._artwork_preview.setFixedSize(64, 64)
+        self._artwork_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._artwork_hint_label = QLabel("No artwork")
+        self._artwork_hint_label.setObjectName("StatusMuted")
+        self._artwork_hint_label.setWordWrap(True)
+        artwork_row.addWidget(self._artwork_preview)
+        artwork_row.addWidget(self._artwork_hint_label, 1)
+        track_layout.addLayout(artwork_row)
         track_layout.addWidget(self._track_table)
         splitter.addWidget(track_group)
         splitter.setStretchFactor(0, 3)
@@ -174,6 +192,8 @@ class AutoTagPanel(QDialog):
         self._match_list.match_model.clear()
         self._track_table.setRowCount(0)
         self._apply_btn.setEnabled(False)
+        self._cancel_artwork_preview()
+        self._clear_artwork_preview()
         self._set_source_status({}, {})
 
         # Pre-fill hints from first file's tags
@@ -217,6 +237,7 @@ class AutoTagPanel(QDialog):
             )
             return
 
+        self._clear_artwork_preview()
         self._search_in_progress = True
         self._refresh_search_controls()
         self._source_status_label.setText("Searching MusicBrainz and Discogs...")
@@ -369,6 +390,93 @@ class AutoTagPanel(QDialog):
             else:
                 self._track_table.setItem(row_index, 3, QTableWidgetItem(""))
 
+        self._start_artwork_preview(candidate)
+
+    def _start_artwork_preview(self, candidate: MatchCandidate) -> None:
+        self._cancel_artwork_preview()
+        self._clear_artwork_preview()
+        self._artwork_hint_label.setText("Loading artwork...")
+        self._preview_request_id += 1
+
+        worker = ArtworkPreviewWorker(match=candidate, request_id=self._preview_request_id)
+        thread = QThread()
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_preview_done, Qt.ConnectionType.QueuedConnection)
+        worker.error.connect(self._on_preview_error, Qt.ConnectionType.QueuedConnection)
+        worker.finished.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        thread.finished.connect(self._cleanup_preview)
+        self._preview_worker = worker
+        self._preview_thread = thread
+        thread.start()
+
+    def _on_preview_done(self, payload: object) -> None:
+        if not isinstance(payload, dict):
+            self._artwork_hint_label.setText("No artwork")
+            return
+        if payload.get("request_id") != self._preview_request_id:
+            return  # stale result from a previous selection
+        data = payload.get("data") or b""
+        message = str(payload.get("message") or "")
+        if data:
+            pixmap = QPixmap()
+            if pixmap.loadFromData(data):
+                scaled = pixmap.scaled(
+                    self._artwork_preview.size(),
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+                self._artwork_preview.setPixmap(scaled)
+                self._artwork_preview.setText("")
+                size_kb = max(1, len(data) // 1024)
+                self._artwork_hint_label.setText(
+                    f"Artwork: {pixmap.width()}×{pixmap.height()} px, {size_kb} KB"
+                )
+            else:
+                self._artwork_hint_label.setText("Artwork: unreadable image data")
+        else:
+            self._artwork_hint_label.setText(message or "No artwork available")
+
+    def _on_preview_error(self, _msg: str) -> None:
+        self._artwork_hint_label.setText("Artwork unavailable")
+
+    def _cancel_artwork_preview(self) -> None:
+        if self._preview_worker:
+            self._preview_worker.cancel()
+        if self._preview_thread and self._preview_thread.isRunning():
+            self._preview_thread.quit()
+            self._preview_thread.wait()
+
+    def _cleanup_preview(self) -> None:
+        worker = self._preview_worker
+        thread = self._preview_thread
+        for signal, slot in (
+            ("finished", self._on_preview_done),
+            ("error", self._on_preview_error),
+        ):
+            if worker:
+                try:
+                    getattr(worker, signal).disconnect(slot)
+                except (RuntimeError, TypeError):
+                    pass
+            if thread and worker:
+                try:
+                    getattr(worker, signal).disconnect(thread.quit)
+                except (RuntimeError, TypeError):
+                    pass
+        if worker:
+            worker.deleteLater()
+            self._preview_worker = None
+        if thread:
+            thread.deleteLater()
+            self._preview_thread = None
+
+    def _clear_artwork_preview(self) -> None:
+        self._artwork_preview.setPixmap(QPixmap())
+        self._artwork_preview.setText("No Preview")
+        self._artwork_hint_label.setText("No artwork")
+
     def _apply_match(self) -> None:
         candidate = self._match_list.selected_candidate()
         if not candidate or not self._files:
@@ -516,6 +624,7 @@ class AutoTagPanel(QDialog):
             self._search_worker.cancel()
         if self._apply_worker:
             self._apply_worker.cancel()
+        self._cancel_artwork_preview()
         if self._search_thread and self._search_thread.isRunning():
             self._search_thread.quit()
             self._search_thread.wait()
