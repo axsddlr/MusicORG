@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   release-on-tag:
@@ -93,12 +94,12 @@ jobs:
 
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "Release already exists for $tag"
-            exit 0
-          fi
-
-          if [[ -f "$notes_file" ]]; then
-            gh release create "$tag" --title "$tag" --notes-file "$notes_file"
           else
-            gh release create "$tag" --title "$tag" --generate-notes
+            if [[ -f "$notes_file" ]]; then
+              gh release create "$tag" --title "$tag" --notes-file "$notes_file"
+            else
+              gh release create "$tag" --title "$tag" --generate-notes
+            fi
           fi
 
+          gh workflow run windows-exe-release.yml --ref "$tag"
