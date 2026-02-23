@@ -80,3 +80,85 @@ class TestTagManager:
         tm = TagManager()
         with pytest.raises(ValueError):
             tm.write(p, TagData())
+
+    def test_read_artwork_uses_raw_and_mime_attributes(self, monkeypatch):
+        class _Artwork:
+            def __init__(self):
+                self.raw = b"\x89PNGdata"
+                self.mime = "image/png"
+
+        class _Field:
+            def __init__(self, first):
+                self.first = first
+
+        class _File:
+            def __getitem__(self, key):
+                if key == "artwork":
+                    return _Field(_Artwork())
+                return _Field(None)
+
+        monkeypatch.setattr(
+            "musicorg.core.tagger.music_tag.load_file",
+            lambda _path: _File(),
+        )
+
+        tm = TagManager()
+        tags = tm.read("dummy.mp3")
+        assert tags.artwork_data == b"\x89PNGdata"
+        assert tags.artwork_mime == "image/png"
+
+    def test_write_artwork_uses_fmt_constructor_when_available(self, monkeypatch):
+        calls = []
+
+        class _File:
+            def __setitem__(self, key, value):
+                calls.append((key, value))
+
+            def save(self):
+                calls.append(("save", None))
+
+        class _Artwork:
+            def __init__(self, **kwargs):
+                calls.append(("artwork", kwargs))
+
+        monkeypatch.setattr(
+            "musicorg.core.tagger.music_tag.load_file",
+            lambda _path: _File(),
+        )
+        monkeypatch.setattr("musicorg.core.tagger.music_tag.Artwork", _Artwork)
+
+        tm = TagManager()
+        tm.write(
+            "dummy.mp3",
+            TagData(artwork_data=b"\x01\x02", artwork_mime="image/png"),
+        )
+
+        artwork_calls = [call for call in calls if call[0] == "artwork"]
+        assert artwork_calls
+        assert artwork_calls[0][1].get("fmt") == "png"
+
+    def test_write_artwork_failure_raises_value_error(self, monkeypatch):
+        class _File:
+            def __setitem__(self, key, value):
+                if key == "artwork":
+                    raise RuntimeError("cannot embed")
+
+            def save(self):
+                raise AssertionError("save should not be called when artwork fails")
+
+        class _Artwork:
+            def __init__(self, **kwargs):
+                _ = kwargs
+
+        monkeypatch.setattr(
+            "musicorg.core.tagger.music_tag.load_file",
+            lambda _path: _File(),
+        )
+        monkeypatch.setattr("musicorg.core.tagger.music_tag.Artwork", _Artwork)
+
+        tm = TagManager()
+        with pytest.raises(ValueError, match="Failed to embed artwork"):
+            tm.write(
+                "dummy.mp3",
+                TagData(artwork_data=b"\x01\x02", artwork_mime="image/png"),
+            )

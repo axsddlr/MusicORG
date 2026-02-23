@@ -48,6 +48,81 @@ class TagData:
         }
 
 
+def _coerce_artwork_bytes(value: Any) -> bytes | None:
+    if value is None:
+        return None
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        data = bytes(value)
+        return data or None
+    if callable(value):
+        try:
+            return _coerce_artwork_bytes(value())
+        except Exception:
+            return None
+    try:
+        data = bytes(value)
+    except Exception:
+        return None
+    return data or None
+
+
+def _infer_artwork_mime(artwork: Any) -> str:
+    raw_mime = getattr(artwork, "mime", "") or getattr(artwork, "mime_type", "")
+    if raw_mime:
+        return str(raw_mime)
+    fmt = str(getattr(artwork, "format", "")).strip().lower()
+    if not fmt:
+        return ""
+    if fmt in {"jpg", "jpeg"}:
+        return "image/jpeg"
+    return f"image/{fmt}"
+
+
+def _infer_artwork_format(mime: str) -> str | None:
+    normalized = mime.strip().lower()
+    if not normalized:
+        return None
+    if normalized in {"image/jpeg", "image/jpg"}:
+        return "jpeg"
+    if normalized == "image/png":
+        return "png"
+    if normalized == "image/webp":
+        return "webp"
+    if normalized == "image/bmp":
+        return "bmp"
+    if normalized == "image/gif":
+        return "gif"
+    if normalized.startswith("image/"):
+        return normalized.split("/", 1)[1]
+    return None
+
+
+def _build_artwork(raw: bytes, mime: str) -> Any:
+    fmt = _infer_artwork_format(mime)
+    constructors: list[tuple[bool, Any]] = [
+        (
+            fmt is not None,
+            lambda: music_tag.Artwork(raw=raw, fmt=fmt),
+        ),
+        (True, lambda: music_tag.Artwork(raw=raw)),
+        (
+            True,
+            lambda: music_tag.Artwork(raw=raw, mime_type=mime or "image/jpeg"),
+        ),
+    ]
+    last_error: Exception | None = None
+    for enabled, constructor in constructors:
+        if not enabled:
+            continue
+        try:
+            return constructor()
+        except TypeError as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise ValueError("No supported artwork constructor available")
+
+
 def _str(f: Any, key: str) -> str:
     try:
         val = f[key].first
@@ -91,8 +166,12 @@ class TagManager:
         try:
             aw = f["artwork"].first
             if aw is not None:
-                artwork_data = bytes(aw.raw_thumbnail)
-                artwork_mime = str(aw.mime_type or "")
+                artwork_data = _coerce_artwork_bytes(getattr(aw, "raw", None))
+                if artwork_data is None:
+                    artwork_data = _coerce_artwork_bytes(
+                        getattr(aw, "raw_thumbnail", None)
+                    )
+                artwork_mime = _infer_artwork_mime(aw)
         except Exception:
             pass
 
@@ -136,13 +215,13 @@ class TagManager:
         if tags.artwork_data is not None:
             try:
                 if tags.artwork_data:
-                    f["artwork"] = music_tag.Artwork(
+                    f["artwork"] = _build_artwork(
                         raw=tags.artwork_data,
-                        mime_type=tags.artwork_mime or "image/jpeg",
+                        mime=tags.artwork_mime or "image/jpeg",
                     )
                 else:
                     f["artwork"] = None
-            except Exception:
-                pass
+            except Exception as exc:
+                raise ValueError(f"Failed to embed artwork for {path}") from exc
 
         f.save()
