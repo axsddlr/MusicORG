@@ -67,6 +67,10 @@ class SelectionManager(QObject):
         return path in self._selected
 
     def select_range_to(self, path: Path, *, additive: bool = False) -> None:
+        if not additive and path in self._selected:
+            self.deselect(path)
+            self._anchor = path
+            return
         if path not in self._order_index:
             if additive:
                 self.select(path)

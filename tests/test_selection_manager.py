@@ -37,3 +37,17 @@ def test_select_group_replaces_when_not_additive() -> None:
 
     manager.select_group(group, additive=False)
     assert manager.selected_paths() == group
+
+
+def test_shift_click_selected_track_deselects_it() -> None:
+    manager = SelectionManager()
+    a = Path("a.mp3")
+    b = Path("b.mp3")
+    manager.set_ordered_paths([a, b])
+
+    manager.select_range_to(a)
+    manager.select_range_to(b)
+    assert manager.selected_paths() == [a, b]
+
+    manager.select_range_to(a)
+    assert manager.selected_paths() == [b]

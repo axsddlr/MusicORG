@@ -98,6 +98,7 @@ _BASE_SELECTION_BEHAVIOR_ROWS: tuple[tuple[str, str], ...] = (
     ("Left Click", "No selection change"),
     ("Ctrl + Left Click", "Toggle one track"),
     ("Shift + Left Click", "Select range from anchor"),
+    ("Shift + Left Click (Selected Track)", "Deselect clicked track"),
     ("Ctrl + Shift + Left Click", "Add range to current selection"),
 )
 
@@ -136,7 +137,7 @@ def selection_behavior_rows(
 
 
 def selection_behavior_hint(mode: AlbumArtworkSelectionMode) -> str:
-    base = "Selection: Ctrl+Click toggle | Shift+Click range"
+    base = "Selection: Ctrl+Click toggle | Shift+Click range/deselect"
     if mode == "single_click":
         return f"{base} | Click artwork toggle album"
     if mode == "double_click":

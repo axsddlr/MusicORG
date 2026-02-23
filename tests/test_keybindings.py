@@ -55,6 +55,7 @@ def test_registry_detects_conflict() -> None:
 def test_selection_behavior_rows_for_single_click_mode() -> None:
     rows = selection_behavior_rows("single_click")
     assert ("Click Album Artwork", "Toggle full album selection") in rows
+    assert ("Shift + Left Click (Selected Track)", "Deselect clicked track") in rows
 
 
 def test_selection_behavior_hint_for_double_click_mode() -> None:
