@@ -75,6 +75,7 @@ class SidebarNav(QFrame):
         ("\uE8B7", "Source"),
         ("\uE895", "Sync"),
         ("\uE8C8", "Duplicates"),
+        ("\uE2C7", "Raw Files"),
     ]
 
     def __init__(self, parent: QWidget | None = None) -> None:

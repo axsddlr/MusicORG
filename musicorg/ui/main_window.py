@@ -20,6 +20,7 @@ from musicorg.ui.keybindings import (
     KeybindRegistry,
     create_bound_action,
 )
+from musicorg.ui.raw_files_panel import RawFilesPanel
 from musicorg.ui.settings_dialog import SettingsDialog
 from musicorg.ui.shortcuts_dialog import ShortcutsDialog
 from musicorg.ui.source_panel import SourcePanel
@@ -45,6 +46,10 @@ class MainWindow(QMainWindow):
         self._tag_editor_action: QAction | None = None
         self._autotag_action: QAction | None = None
         self._artwork_action: QAction | None = None
+        self._panel_selection_stats: dict[str, tuple[int, int]] = {
+            "source": (0, 0),
+            "raw_files": (0, 0),
+        }
         try:
             self._keybind_registry = KeybindRegistry(
                 DEFAULT_KEYBINDS,
@@ -89,6 +94,7 @@ class MainWindow(QMainWindow):
         )
         self._sync_panel = SyncPanel()
         self._duplicates_panel = DuplicatesPanel()
+        self._raw_files_panel = RawFilesPanel()
 
         # Tag Editor, Auto-Tag, and Artwork Downloader are popup dialogs.
         self._tag_editor_panel = TagEditorPanel(self)
@@ -103,10 +109,12 @@ class MainWindow(QMainWindow):
         self._autotag_panel.set_discogs_token(self._settings.discogs_token)
         self._artwork_downloader_panel.set_discogs_token(self._settings.discogs_token)
         self._duplicates_panel.set_cache_db_path(cache_path)
+        self._raw_files_panel.set_cache_db_path(cache_path)
 
         self._stack.addWidget(self._source_panel)      # index 0
         self._stack.addWidget(self._sync_panel)         # index 1
         self._stack.addWidget(self._duplicates_panel)   # index 2
+        self._stack.addWidget(self._raw_files_panel)    # index 3
         self._content_container = QWidget()
         content_grid = QGridLayout(self._content_container)
         content_grid.setContentsMargins(0, 0, 0, 0)
@@ -129,6 +137,7 @@ class MainWindow(QMainWindow):
             self._source_panel.set_source_dir(self._settings.source_dir)
             self._sync_panel.set_source_dir(self._settings.source_dir)
             self._duplicates_panel.set_source_dir(self._settings.source_dir)
+            self._raw_files_panel.set_source_dir(self._settings.source_dir)
         if self._settings.dest_dir:
             self._sync_panel.set_dest_dir(self._settings.dest_dir)
         self._sync_panel.set_path_format(self._settings.path_format)
@@ -139,6 +148,7 @@ class MainWindow(QMainWindow):
             self._source_panel.emit_active_artist_artwork()
         else:
             self._backdrop.clear()
+        self._refresh_tools_and_status_for_active_panel()
 
     def _setup_menu(self) -> None:
         menubar = self.menuBar()
@@ -215,17 +225,83 @@ class MainWindow(QMainWindow):
         self._source_panel.send_to_editor_requested.connect(self._send_to_editor)
         self._source_panel.send_to_autotag_requested.connect(self._send_to_autotag)
         self._source_panel.send_to_artwork_requested.connect(self._send_to_artwork)
-        self._source_panel.selection_stats_changed.connect(self._status_strip.set_file_count)
-        self._source_panel.selection_stats_changed.connect(self._update_tools_availability)
-        self._source_panel.album_artwork_changed.connect(self._backdrop.set_artwork)
-        self._update_tools_availability(
-            total=0,
-            selected=len(self._source_panel.selected_paths()),
+        self._source_panel.selection_stats_changed.connect(
+            lambda total, selected: self._on_library_selection_stats_changed(
+                "source",
+                total,
+                selected,
+            )
         )
+        self._source_panel.album_artwork_changed.connect(self._backdrop.set_artwork)
+        self._raw_files_panel.send_to_editor_requested.connect(self._send_to_editor)
+        self._raw_files_panel.send_to_autotag_requested.connect(self._send_to_autotag)
+        self._raw_files_panel.send_to_artwork_requested.connect(self._send_to_artwork)
+        self._raw_files_panel.selection_stats_changed.connect(
+            lambda total, selected: self._on_library_selection_stats_changed(
+                "raw_files",
+                total,
+                selected,
+            )
+        )
+        self._panel_selection_stats["source"] = (
+            0,
+            len(self._source_panel.selected_paths()),
+        )
+        self._panel_selection_stats["raw_files"] = (
+            0,
+            len(self._raw_files_panel.selected_paths()),
+        )
+        self._refresh_tools_and_status_for_active_panel()
         # Auto-Tag applied -> refresh notice
         self._autotag_panel.tags_applied.connect(
             lambda: self._status_strip.show_message("Tags applied - re-scan to see changes")
         )
+
+    def _on_library_selection_stats_changed(
+        self,
+        panel_name: str,
+        total: int,
+        selected: int,
+    ) -> None:
+        self._panel_selection_stats[panel_name] = (total, selected)
+        active_name = self._active_selection_panel_name()
+        if active_name == panel_name:
+            self._status_strip.set_file_count(total, selected)
+            self._update_tools_availability(total, selected)
+
+    def _refresh_tools_and_status_for_active_panel(self) -> None:
+        active_name = self._active_selection_panel_name()
+        if active_name is None:
+            self._status_strip.set_file_count(0, 0)
+            self._update_tools_availability(total=0, selected=0)
+            return
+        total, selected = self._panel_selection_stats.get(active_name, (0, 0))
+        self._status_strip.set_file_count(total, selected)
+        self._update_tools_availability(total=total, selected=selected)
+
+    def _active_selection_panel_name(self) -> str | None:
+        current_index = self._stack.currentIndex()
+        if current_index == 0:
+            return "source"
+        if current_index == 3:
+            return "raw_files"
+        return None
+
+    def _selected_paths_for_tools(self) -> list[Path]:
+        active_name = self._active_selection_panel_name()
+        if active_name == "source":
+            return self._source_panel.selected_paths()
+        if active_name == "raw_files":
+            return self._raw_files_panel.selected_paths()
+        return []
+
+    def _active_selection_panel_label(self) -> str:
+        active_name = self._active_selection_panel_name()
+        if active_name == "source":
+            return "Source"
+        if active_name == "raw_files":
+            return "Raw Files"
+        return "Source or Raw Files"
 
     def _update_tools_availability(self, total: int, selected: int) -> None:
         _ = total
@@ -256,23 +332,35 @@ class MainWindow(QMainWindow):
             self._artwork_downloader_panel.raise_()
 
     def _open_tag_editor_from_selection(self) -> None:
-        selected_paths = self._source_panel.selected_paths()
+        selected_paths = self._selected_paths_for_tools()
         if not selected_paths:
-            self._status_strip.show_message("Select files in Source to open Tag Editor", 2400)
+            panel_label = self._active_selection_panel_label()
+            self._status_strip.show_message(
+                f"Select files in {panel_label} to open Tag Editor",
+                2400,
+            )
             return
         self._send_to_editor(selected_paths)
 
     def _open_autotag_from_selection(self) -> None:
-        selected_paths = self._source_panel.selected_paths()
+        selected_paths = self._selected_paths_for_tools()
         if not selected_paths:
-            self._status_strip.show_message("Select files in Source to open Auto-Tag", 2400)
+            panel_label = self._active_selection_panel_label()
+            self._status_strip.show_message(
+                f"Select files in {panel_label} to open Auto-Tag",
+                2400,
+            )
             return
         self._send_to_autotag(selected_paths)
 
     def _open_artwork_from_selection(self) -> None:
-        selected_paths = self._source_panel.selected_paths()
+        selected_paths = self._selected_paths_for_tools()
         if not selected_paths:
-            self._status_strip.show_message("Select files in Source to open Artwork", 2400)
+            panel_label = self._active_selection_panel_label()
+            self._status_strip.show_message(
+                f"Select files in {panel_label} to open Artwork",
+                2400,
+            )
             return
         self._send_to_artwork(selected_paths)
 
@@ -286,6 +374,7 @@ class MainWindow(QMainWindow):
                 self._source_panel.set_source_dir(self._settings.source_dir)
                 self._sync_panel.set_source_dir(self._settings.source_dir)
                 self._duplicates_panel.set_source_dir(self._settings.source_dir)
+                self._raw_files_panel.set_source_dir(self._settings.source_dir)
             if self._settings.dest_dir:
                 self._sync_panel.set_dest_dir(self._settings.dest_dir)
             self._sync_panel.set_path_format(self._settings.path_format)
@@ -319,6 +408,7 @@ class MainWindow(QMainWindow):
             "  - Auto-tagging via MusicBrainz + Discogs\n"
             "  - Artwork downloader with preview + apply to selected files\n"
             "  - Ctrl/Shift range selection and album-level artwork selection\n"
+            "  - Raw filesystem browser for mixed-folder tagging workflows\n"
             "  - Non-destructive directory sync and duplicate review\n"
             "\nHelp:\n"
             "  - Help > Keyboard Shortcuts for keybind and selection reference"
@@ -344,5 +434,6 @@ class MainWindow(QMainWindow):
         self._artwork_downloader_panel.shutdown()
         self._sync_panel.shutdown()
         self._duplicates_panel.shutdown()
+        self._raw_files_panel.shutdown()
         self._settings.window_geometry = self.saveGeometry()
         super().closeEvent(event)
