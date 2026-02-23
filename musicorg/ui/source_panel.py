@@ -114,6 +114,10 @@ class SourcePanel(QWidget):
         self._selection_status_label = QLabel("0 selected")
         self._selection_status_label.setObjectName("StatusDetail")
         action_layout.addWidget(self._selection_status_label)
+        self._selection_deselect_btn = QPushButton("Deselect")
+        self._selection_deselect_btn.setEnabled(False)
+        self._selection_deselect_btn.clicked.connect(self._deselect_all_tracks)
+        action_layout.addWidget(self._selection_deselect_btn)
         action_layout.addStretch()
         layout.addWidget(action_container)
         self._selection_hint_label = QLabel("")
@@ -217,6 +221,7 @@ class SourcePanel(QWidget):
         has_selection = bool(selected_count)
         self._select_all_btn.setEnabled(has_visible)
         self._deselect_all_btn.setEnabled(has_visible and has_selection)
+        self._selection_deselect_btn.setEnabled(has_selection)
         self._selection_status_label.setText(f"{selected_count} selected")
         self._emit_selection_stats()
 

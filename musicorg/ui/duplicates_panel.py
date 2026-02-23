@@ -89,10 +89,22 @@ class DuplicatesPanel(QWidget):
         tree_header.setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
         self._tree.setAlternatingRowColors(True)
         self._tree.setRootIsDecorated(True)
+        self._tree.itemChanged.connect(self._on_tree_item_changed)
         layout.addWidget(self._tree, 1)
 
         # Action row
         action_row = QHBoxLayout()
+        self._selection_label = QLabel("0 selected")
+        self._selection_label.setObjectName("StatusDetail")
+        action_row.addWidget(self._selection_label)
+        self._select_all_btn = QPushButton("Select All")
+        self._select_all_btn.setEnabled(False)
+        self._select_all_btn.clicked.connect(self._select_all_deletable)
+        action_row.addWidget(self._select_all_btn)
+        self._deselect_btn = QPushButton("Deselect")
+        self._deselect_btn.setEnabled(False)
+        self._deselect_btn.clicked.connect(self._deselect_all_deletable)
+        action_row.addWidget(self._deselect_btn)
         self._delete_btn = QPushButton("Delete Selected")
         self._delete_btn.setEnabled(False)
         self._delete_btn.clicked.connect(self._start_delete)
@@ -124,6 +136,9 @@ class DuplicatesPanel(QWidget):
         self._tree.clear()
         self._groups = []
         self._summary_label.setText("")
+        self._selection_label.setText("0 selected")
+        self._select_all_btn.setEnabled(False)
+        self._deselect_btn.setEnabled(False)
         self._progress.start("Scanning for duplicates...")
 
         self._scan_worker = DuplicateScanWorker(
@@ -160,7 +175,7 @@ class DuplicatesPanel(QWidget):
         self._populate_tree()
         self._scan_btn.setEnabled(True)
         self._cancel_btn.setEnabled(False)
-        self._delete_btn.setEnabled(bool(groups))
+        self._update_selection_controls()
 
         total_files = sum(len(g.deletable_files) for g in groups)
         total_size = sum(f.size for g in groups for f in g.deletable_files)
@@ -182,6 +197,7 @@ class DuplicatesPanel(QWidget):
         self._progress.finish("Scan cancelled")
 
     def _populate_tree(self) -> None:
+        self._tree.blockSignals(True)
         self._tree.clear()
         for group in self._groups:
             kept = group.kept_file
@@ -221,6 +237,8 @@ class DuplicatesPanel(QWidget):
                 child.setData(0, Qt.ItemDataRole.UserRole, str(df.path))
 
             group_item.setExpanded(True)
+        self._tree.blockSignals(False)
+        self._update_selection_controls()
 
     def _get_checked_paths(self) -> list[Path]:
         """Collect paths from checked (deletable) child items."""
@@ -234,6 +252,47 @@ class DuplicatesPanel(QWidget):
                     if path_str:
                         paths.append(Path(path_str))
         return paths
+
+    def _deletable_items(self) -> list[QTreeWidgetItem]:
+        items: list[QTreeWidgetItem] = []
+        for gi in range(self._tree.topLevelItemCount()):
+            group_item = self._tree.topLevelItem(gi)
+            for ci in range(group_item.childCount()):
+                child = group_item.child(ci)
+                if child.flags() & Qt.ItemFlag.ItemIsUserCheckable:
+                    items.append(child)
+        return items
+
+    def _select_all_deletable(self) -> None:
+        items = self._deletable_items()
+        if not items:
+            return
+        self._tree.blockSignals(True)
+        for child in items:
+            child.setCheckState(0, Qt.CheckState.Checked)
+        self._tree.blockSignals(False)
+        self._update_selection_controls()
+
+    def _deselect_all_deletable(self) -> None:
+        items = self._deletable_items()
+        if not items:
+            return
+        self._tree.blockSignals(True)
+        for child in items:
+            child.setCheckState(0, Qt.CheckState.Unchecked)
+        self._tree.blockSignals(False)
+        self._update_selection_controls()
+
+    def _on_tree_item_changed(self, _item: QTreeWidgetItem, _column: int) -> None:
+        self._update_selection_controls()
+
+    def _update_selection_controls(self) -> None:
+        checked_count = len(self._get_checked_paths())
+        deletable_count = len(self._deletable_items())
+        self._selection_label.setText(f"{checked_count} selected")
+        self._select_all_btn.setEnabled(deletable_count > 0 and checked_count < deletable_count)
+        self._deselect_btn.setEnabled(checked_count > 0)
+        self._delete_btn.setEnabled(checked_count > 0)
 
     def _start_delete(self) -> None:
         paths = self._get_checked_paths()
