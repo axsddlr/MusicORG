@@ -84,7 +84,9 @@ def _normalize_track_value(value: str) -> str:
     return " ".join(value.strip().lower().split())
 
 
-_LEADING_TRACK_PREFIX_RE = re.compile(r"^\s*(?:\d+\s*-\s*)+")
+_LEADING_TRACK_PREFIX_RE = re.compile(
+    r"^\s*(?:(?:(?:#|\d{1,3})\s*-\s*)*(?:#|\d{1,3}))\s*(?:-\s*)?"
+)
 
 
 def _normalize_filename_for_match(path: Path) -> tuple[str, str]:
@@ -92,10 +94,10 @@ def _normalize_filename_for_match(path: Path) -> tuple[str, str]:
     ext = path.suffix.lower()
     stem = path.stem
     without_prefix = _LEADING_TRACK_PREFIX_RE.sub("", stem, count=1)
-    normalized = _normalize_track_value(without_prefix)
+    normalized = _normalize_track_value(_sanitize_filename(without_prefix))
     if normalized:
         return ext, normalized
-    return ext, _normalize_track_value(stem)
+    return ext, _normalize_track_value(_sanitize_filename(stem))
 
 
 def _directory_file_keys(

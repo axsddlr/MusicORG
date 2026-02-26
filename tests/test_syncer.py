@@ -70,6 +70,16 @@ class TestFilenameEquivalence:
         key_b = _normalize_filename_for_match(Path("15 - SCRAMBLED EGGS - TBC (.mp3"))
         assert key_a == key_b
 
+    def test_normalize_filename_matches_hyphenated_and_space_prefixed_forms(self):
+        key_a = _normalize_filename_for_match(Path("1-09 - F.I.C.O..flac"))
+        key_b = _normalize_filename_for_match(Path("09 F.I.C.O..flac"))
+        assert key_a == key_b
+
+    def test_normalize_filename_matches_hash_and_zero_prefix_forms(self):
+        key_a = _normalize_filename_for_match(Path("# - BIG x BIG GUY.mp3"))
+        key_b = _normalize_filename_for_match(Path("00 BIG x BIG GUY.mp3"))
+        assert key_a == key_b
+
 
 class TestSyncPlan:
     def test_counts(self):
@@ -183,6 +193,65 @@ class TestSyncManager:
                 title="1-15 - SCRAMBLED EGGS - TBC (",
                 artist="Artist",
                 album="Album",
+            )
+
+        mgr._tag_manager.read = fake_read  # type: ignore[method-assign]
+
+        plan = mgr.plan_sync(source, dest)
+        assert plan.total == 1
+        assert plan.items[0].status == "exists"
+
+    def test_plan_sync_marks_exists_for_space_prefixed_target_when_hyphenated_exists(
+        self,
+        tmp_path,
+    ):
+        source = tmp_path / "source"
+        dest = tmp_path / "dest"
+        source.mkdir()
+        dest.mkdir()
+
+        src_song = source / "song9.mp3"
+        src_song.write_bytes(b"src")
+        existing_dest = dest / "Artist" / "Album" / "1-09 - F.I.C.O..mp3"
+        existing_dest.parent.mkdir(parents=True)
+        existing_dest.write_bytes(b"dst")
+
+        mgr = SyncManager(path_format="$albumartist/$album/$track $title")
+
+        def fake_read(_path: Path) -> TagData:
+            return TagData(
+                title="F.I.C.O.",
+                artist="Artist",
+                album="Album",
+                track=9,
+            )
+
+        mgr._tag_manager.read = fake_read  # type: ignore[method-assign]
+
+        plan = mgr.plan_sync(source, dest)
+        assert plan.total == 1
+        assert plan.items[0].status == "exists"
+
+    def test_plan_sync_marks_exists_for_zero_prefixed_target_when_hash_exists(self, tmp_path):
+        source = tmp_path / "source"
+        dest = tmp_path / "dest"
+        source.mkdir()
+        dest.mkdir()
+
+        src_song = source / "song35.mp3"
+        src_song.write_bytes(b"src")
+        existing_dest = dest / "Spectre" / "Spectre Mashups" / "# - BIG x BIG GUY.mp3"
+        existing_dest.parent.mkdir(parents=True)
+        existing_dest.write_bytes(b"dst")
+
+        mgr = SyncManager(path_format="$albumartist/$album/$track $title")
+
+        def fake_read(_path: Path) -> TagData:
+            return TagData(
+                title="BIG x BIG GUY",
+                albumartist="Spectre",
+                album="Spectre Mashups",
+                track=0,
             )
 
         mgr._tag_manager.read = fake_read  # type: ignore[method-assign]
