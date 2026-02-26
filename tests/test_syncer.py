@@ -75,6 +75,11 @@ class TestFilenameEquivalence:
         key_b = _normalize_filename_for_match(Path("09 F.I.C.O..flac"))
         assert key_a == key_b
 
+    def test_normalize_filename_matches_come_along_prefix_variant(self):
+        key_a = _normalize_filename_for_match(Path("1-02 - Come Along.mp3"))
+        key_b = _normalize_filename_for_match(Path("02 Come Along.mp3"))
+        assert key_a == key_b
+
     def test_normalize_filename_matches_hash_and_zero_prefix_forms(self):
         key_a = _normalize_filename_for_match(Path("# - BIG x BIG GUY.mp3"))
         key_b = _normalize_filename_for_match(Path("00 BIG x BIG GUY.mp3"))
@@ -224,6 +229,36 @@ class TestSyncManager:
                 artist="Artist",
                 album="Album",
                 track=9,
+            )
+
+        mgr._tag_manager.read = fake_read  # type: ignore[method-assign]
+
+        plan = mgr.plan_sync(source, dest)
+        assert plan.total == 1
+        assert plan.items[0].status == "exists"
+
+    def test_plan_sync_marks_exists_for_come_along_prefix_variant(self, tmp_path):
+        source = tmp_path / "source"
+        dest = tmp_path / "dest"
+        source.mkdir()
+        dest.mkdir()
+
+        src_song = source / "song2.mp3"
+        src_song.write_bytes(b"src")
+        existing_dest = dest / "Joe Budden" / "Mood Muzik 4_ A Turn 4 the Worst" / (
+            "1-02 - Come Along.mp3"
+        )
+        existing_dest.parent.mkdir(parents=True)
+        existing_dest.write_bytes(b"dst")
+
+        mgr = SyncManager(path_format="$albumartist/$album/$track $title")
+
+        def fake_read(_path: Path) -> TagData:
+            return TagData(
+                title="Come Along",
+                albumartist="Joe Budden",
+                album="Mood Muzik 4: A Turn 4 the Worst",
+                track=2,
             )
 
         mgr._tag_manager.read = fake_read  # type: ignore[method-assign]

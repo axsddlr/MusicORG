@@ -85,7 +85,7 @@ def _normalize_track_value(value: str) -> str:
 
 
 _LEADING_TRACK_PREFIX_RE = re.compile(
-    r"^\s*(?:(?:(?:#|\d{1,3})\s*-\s*)*(?:#|\d{1,3}))\s*(?:-\s*)?"
+    r"^\s*(?:(?:(?:#|\d{1,3})\s*[-–—_.]\s*)*(?:#|\d{1,3}))\s*(?:[-–—_.]\s*)?"
 )
 
 
