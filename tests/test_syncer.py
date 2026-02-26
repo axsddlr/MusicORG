@@ -6,7 +6,7 @@ import pytest
 
 from musicorg.core.syncer import (
     SyncItem, SyncManager, SyncPlan,
-    _build_dest_path, _sanitize_filename,
+    _build_dest_path, _normalize_filename_for_match, _sanitize_filename,
 )
 from musicorg.core.tagger import TagData
 
@@ -62,6 +62,13 @@ class TestBuildDestPath:
         )
         assert ":" not in result.name
         # The forward slash in AC/DC is handled by path splitting
+
+
+class TestFilenameEquivalence:
+    def test_normalize_filename_strips_leading_numeric_prefix_chain(self):
+        key_a = _normalize_filename_for_match(Path("1-15 - SCRAMBLED EGGS - TBC (.mp3"))
+        key_b = _normalize_filename_for_match(Path("15 - SCRAMBLED EGGS - TBC (.mp3"))
+        assert key_a == key_b
 
 
 class TestSyncPlan:
@@ -156,3 +163,30 @@ class TestSyncManager:
         assert any(i.source == dst_song2 for i in reverse_items)
         # song1 exists in both trees (same track identity), so no reverse copy for it.
         assert not any(i.source == dst_song1 for i in reverse_items)
+
+    def test_plan_sync_marks_exists_when_equivalent_prefixed_name_exists(self, tmp_path):
+        source = tmp_path / "source"
+        dest = tmp_path / "dest"
+        source.mkdir()
+        dest.mkdir()
+
+        src_song = source / "song1.mp3"
+        src_song.write_bytes(b"src")
+        existing_dest = dest / "Artist" / "Album" / "15 - SCRAMBLED EGGS - TBC (.mp3"
+        existing_dest.parent.mkdir(parents=True)
+        existing_dest.write_bytes(b"dst")
+
+        mgr = SyncManager(path_format="$albumartist/$album/$title")
+
+        def fake_read(_path: Path) -> TagData:
+            return TagData(
+                title="1-15 - SCRAMBLED EGGS - TBC (",
+                artist="Artist",
+                album="Album",
+            )
+
+        mgr._tag_manager.read = fake_read  # type: ignore[method-assign]
+
+        plan = mgr.plan_sync(source, dest)
+        assert plan.total == 1
+        assert plan.items[0].status == "exists"

@@ -84,6 +84,50 @@ def _normalize_track_value(value: str) -> str:
     return " ".join(value.strip().lower().split())
 
 
+_LEADING_TRACK_PREFIX_RE = re.compile(r"^\s*(?:\d+\s*-\s*)+")
+
+
+def _normalize_filename_for_match(path: Path) -> tuple[str, str]:
+    """Normalize a filename for equivalence checks across prefix variants."""
+    ext = path.suffix.lower()
+    stem = path.stem
+    without_prefix = _LEADING_TRACK_PREFIX_RE.sub("", stem, count=1)
+    normalized = _normalize_track_value(without_prefix)
+    if normalized:
+        return ext, normalized
+    return ext, _normalize_track_value(stem)
+
+
+def _directory_file_keys(
+    directory: Path,
+    cache: dict[Path, set[tuple[str, str]]],
+) -> set[tuple[str, str]]:
+    cached = cache.get(directory)
+    if cached is not None:
+        return cached
+
+    keys: set[tuple[str, str]] = set()
+    if directory.is_dir():
+        for child in directory.iterdir():
+            if child.is_file():
+                keys.add(_normalize_filename_for_match(child))
+    cache[directory] = keys
+    return keys
+
+
+def _path_exists_or_equivalent(
+    target_path: Path,
+    directory_cache: dict[Path, set[tuple[str, str]]],
+) -> bool:
+    if target_path.exists():
+        return True
+    parent = target_path.parent
+    if not parent.exists():
+        return False
+    key = _normalize_filename_for_match(target_path)
+    return key in _directory_file_keys(parent, directory_cache)
+
+
 def _track_identity(path: Path, tags: dict) -> tuple[str, str, str, int, int]:
     """Build a normalized identity key for matching tracks across trees."""
     artist = tags.get("albumartist") or tags.get("artist") or ""
@@ -124,6 +168,8 @@ class SyncManager:
         step = 0
         plan = SyncPlan()
         source_track_keys: set[tuple[str, str, str, int, int]] = set()
+        dest_dir_keys: dict[Path, set[tuple[str, str]]] = {}
+        source_dir_keys: dict[Path, set[tuple[str, str]]] = {}
 
         for af in source_files:
             if self._cancelled:
@@ -144,7 +190,7 @@ class SyncManager:
                                          self._path_format)
 
             item = SyncItem(source=af.path, dest=dest_path)
-            if dest_path.exists():
+            if _path_exists_or_equivalent(dest_path, dest_dir_keys):
                 item.status = "exists"
             plan.items.append(item)
 
@@ -172,7 +218,7 @@ class SyncManager:
                                                self._path_format)
 
                 item = SyncItem(source=af.path, dest=source_path)
-                if source_path.exists():
+                if _path_exists_or_equivalent(source_path, source_dir_keys):
                     item.status = "exists"
                 plan.items.append(item)
 
