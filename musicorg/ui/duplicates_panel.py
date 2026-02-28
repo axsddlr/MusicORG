@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 from musicorg.core.duplicate_finder import DuplicateGroup
 from musicorg.ui.widgets.dir_picker import DirPicker
 from musicorg.ui.widgets.progress_bar import ProgressIndicator
+from musicorg.ui.utils import safe_disconnect_multiple
 from musicorg.workers.duplicate_worker import DuplicateDeleteWorker, DuplicateScanWorker
 
 COLOR_KEEP = QColor("#4CAF50")
@@ -372,7 +373,7 @@ class DuplicatesPanel(QWidget):
         scan_worker = self._scan_worker
         scan_thread = self._scan_thread
         if scan_worker and scan_thread:
-            for sig, slot in [
+            safe_disconnect_multiple([
                 (scan_worker.progress, self._on_scan_progress),
                 (scan_worker.finished, self._on_scan_done),
                 (scan_worker.error, self._on_scan_error),
@@ -380,11 +381,7 @@ class DuplicatesPanel(QWidget):
                 (scan_worker.finished, scan_thread.quit),
                 (scan_worker.error, scan_thread.quit),
                 (scan_worker.cancelled, scan_thread.quit),
-            ]:
-                try:
-                    sig.disconnect(slot)
-                except (RuntimeError, TypeError):
-                    pass
+            ])
         if scan_worker:
             scan_worker.deleteLater()
             self._scan_worker = None
@@ -396,7 +393,7 @@ class DuplicatesPanel(QWidget):
         delete_worker = self._delete_worker
         delete_thread = self._delete_thread
         if delete_worker and delete_thread:
-            for sig, slot in [
+            safe_disconnect_multiple([
                 (delete_worker.progress, self._on_delete_progress),
                 (delete_worker.finished, self._on_delete_done),
                 (delete_worker.error, self._on_delete_error),
@@ -404,11 +401,7 @@ class DuplicatesPanel(QWidget):
                 (delete_worker.finished, delete_thread.quit),
                 (delete_worker.error, delete_thread.quit),
                 (delete_worker.cancelled, delete_thread.quit),
-            ]:
-                try:
-                    sig.disconnect(slot)
-                except (RuntimeError, TypeError):
-                    pass
+            ])
         if delete_worker:
             delete_worker.deleteLater()
             self._delete_worker = None

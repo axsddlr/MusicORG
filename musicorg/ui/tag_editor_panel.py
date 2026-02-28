@@ -21,6 +21,7 @@ from musicorg.core.tag_cache import TagCache
 from musicorg.core.tagger import TagData, TagManager
 from musicorg.ui.widgets.progress_bar import ProgressIndicator
 from musicorg.ui.widgets.tag_form import TagForm
+from musicorg.ui.utils import safe_disconnect_multiple
 from musicorg.workers.tag_write_worker import TagWriteFailure, TagWriteSummary, TagWriteWorker
 
 
@@ -428,26 +429,13 @@ class TagEditorPanel(QDialog):
         save_worker = self._save_worker
         save_thread = self._save_thread
         if save_worker and save_thread:
-            try:
-                save_worker.progress.disconnect(self._on_save_all_progress)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                save_worker.finished.disconnect(self._on_save_all_done)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                save_worker.error.disconnect(self._on_save_all_error)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                save_worker.finished.disconnect(save_thread.quit)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                save_worker.error.disconnect(save_thread.quit)
-            except (RuntimeError, TypeError):
-                pass
+            safe_disconnect_multiple([
+                (save_worker.progress, self._on_save_all_progress),
+                (save_worker.finished, self._on_save_all_done),
+                (save_worker.error, self._on_save_all_error),
+                (save_worker.finished, save_thread.quit),
+                (save_worker.error, save_thread.quit),
+            ])
         if save_worker:
             save_worker.deleteLater()
             self._save_worker = None

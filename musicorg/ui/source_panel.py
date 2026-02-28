@@ -26,6 +26,7 @@ from musicorg.ui.widgets.artist_list import ArtistListWidget, ROLE_ARTIST_KEY
 from musicorg.ui.widgets.dir_picker import DirPicker
 from musicorg.ui.widgets.progress_bar import ProgressIndicator
 from musicorg.ui.widgets.selection_manager import SelectionManager
+from musicorg.ui.utils import safe_disconnect_multiple
 from musicorg.workers.scan_worker import ScanWorker
 from musicorg.workers.tag_read_worker import (
     TagBatchEntry,
@@ -676,26 +677,13 @@ class SourcePanel(QWidget):
         scan_worker = self._scan_worker
         scan_thread = self._scan_thread
         if scan_worker and scan_thread:
-            try:
-                scan_worker.progress.disconnect(self._on_scan_progress)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                scan_worker.finished.disconnect(self._on_scan_finished)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                scan_worker.error.disconnect(self._on_scan_error)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                scan_worker.finished.disconnect(scan_thread.quit)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                scan_worker.error.disconnect(scan_thread.quit)
-            except (RuntimeError, TypeError):
-                pass
+            safe_disconnect_multiple([
+                (scan_worker.progress, self._on_scan_progress),
+                (scan_worker.finished, self._on_scan_finished),
+                (scan_worker.error, self._on_scan_error),
+                (scan_worker.finished, scan_thread.quit),
+                (scan_worker.error, scan_thread.quit),
+            ])
         if scan_worker:
             scan_worker.deleteLater()
             self._scan_worker = None
@@ -707,30 +695,14 @@ class SourcePanel(QWidget):
         tag_read_worker = self._tag_worker
         tag_read_thread = self._tag_thread
         if tag_read_worker and tag_read_thread:
-            try:
-                tag_read_worker.progress.disconnect(self._on_tag_read_progress)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                tag_read_worker.finished.disconnect(self._on_tags_read)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                tag_read_worker.batch_ready.disconnect(self._on_tag_batch_ready)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                tag_read_worker.error.disconnect(self._on_scan_error)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                tag_read_worker.finished.disconnect(tag_read_thread.quit)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                tag_read_worker.error.disconnect(tag_read_thread.quit)
-            except (RuntimeError, TypeError):
-                pass
+            safe_disconnect_multiple([
+                (tag_read_worker.progress, self._on_tag_read_progress),
+                (tag_read_worker.finished, self._on_tags_read),
+                (tag_read_worker.batch_ready, self._on_tag_batch_ready),
+                (tag_read_worker.error, self._on_scan_error),
+                (tag_read_worker.finished, tag_read_thread.quit),
+                (tag_read_worker.error, tag_read_thread.quit),
+            ])
         if tag_read_worker:
             tag_read_worker.deleteLater()
             self._tag_worker = None

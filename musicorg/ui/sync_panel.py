@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 from musicorg.core.syncer import SyncPlan
 from musicorg.ui.widgets.dir_picker import DirPicker
 from musicorg.ui.widgets.progress_bar import ProgressIndicator
+from musicorg.ui.utils import safe_disconnect_multiple
 from musicorg.workers.sync_worker import SyncExecuteWorker, SyncPlanWorker
 
 STATUS_COLORS = {
@@ -250,26 +251,13 @@ class SyncPanel(QWidget):
         plan_worker = self._plan_worker
         plan_thread = self._plan_thread
         if plan_worker and plan_thread:
-            try:
-                plan_worker.progress.disconnect(self._on_plan_progress)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                plan_worker.finished.disconnect(self._on_plan_done)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                plan_worker.error.disconnect(self._on_plan_error)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                plan_worker.finished.disconnect(plan_thread.quit)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                plan_worker.error.disconnect(plan_thread.quit)
-            except (RuntimeError, TypeError):
-                pass
+            safe_disconnect_multiple([
+                (plan_worker.progress, self._on_plan_progress),
+                (plan_worker.finished, self._on_plan_done),
+                (plan_worker.error, self._on_plan_error),
+                (plan_worker.finished, plan_thread.quit),
+                (plan_worker.error, plan_thread.quit),
+            ])
         if plan_worker:
             plan_worker.deleteLater()
             self._plan_worker = None
@@ -281,34 +269,15 @@ class SyncPanel(QWidget):
         sync_worker = self._sync_worker
         sync_thread = self._sync_thread
         if sync_worker and sync_thread:
-            try:
-                sync_worker.progress.disconnect(self._on_sync_progress)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                sync_worker.finished.disconnect(self._on_sync_done)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                sync_worker.error.disconnect(self._on_sync_error)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                sync_worker.cancelled.disconnect(self._on_sync_cancelled)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                sync_worker.finished.disconnect(sync_thread.quit)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                sync_worker.error.disconnect(sync_thread.quit)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                sync_worker.cancelled.disconnect(sync_thread.quit)
-            except (RuntimeError, TypeError):
-                pass
+            safe_disconnect_multiple([
+                (sync_worker.progress, self._on_sync_progress),
+                (sync_worker.finished, self._on_sync_done),
+                (sync_worker.error, self._on_sync_error),
+                (sync_worker.cancelled, self._on_sync_cancelled),
+                (sync_worker.finished, sync_thread.quit),
+                (sync_worker.error, sync_thread.quit),
+                (sync_worker.cancelled, sync_thread.quit),
+            ])
         if sync_worker:
             sync_worker.deleteLater()
             self._sync_worker = None

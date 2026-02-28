@@ -19,6 +19,7 @@ from PySide6.QtCore import Qt
 from musicorg.core.autotagger import MatchCandidate
 from musicorg.ui.widgets.match_list import MatchList
 from musicorg.ui.widgets.progress_bar import ProgressIndicator
+from musicorg.ui.utils import safe_disconnect_multiple
 from musicorg.workers.artwork_worker import ArtworkPreviewWorker
 from musicorg.workers.autotag_worker import ApplyMatchWorker, AutoTagWorker, SearchMode
 
@@ -451,20 +452,13 @@ class AutoTagPanel(QDialog):
     def _cleanup_preview(self) -> None:
         worker = self._preview_worker
         thread = self._preview_thread
-        for signal, slot in (
-            ("finished", self._on_preview_done),
-            ("error", self._on_preview_error),
-        ):
-            if worker:
-                try:
-                    getattr(worker, signal).disconnect(slot)
-                except (RuntimeError, TypeError):
-                    pass
-            if thread and worker:
-                try:
-                    getattr(worker, signal).disconnect(thread.quit)
-                except (RuntimeError, TypeError):
-                    pass
+        if worker and thread:
+            safe_disconnect_multiple([
+                (worker.finished, self._on_preview_done),
+                (worker.error, self._on_preview_error),
+                (worker.finished, thread.quit),
+                (worker.error, thread.quit),
+            ])
         if worker:
             worker.deleteLater()
             self._preview_worker = None
@@ -561,26 +555,13 @@ class AutoTagPanel(QDialog):
         search_worker: AutoTagWorker,
         search_thread: QThread,
     ) -> None:
-        try:
-            search_worker.progress.disconnect(self._on_search_progress)
-        except (RuntimeError, TypeError):
-            pass
-        try:
-            search_worker.finished.disconnect(self._on_search_done)
-        except (RuntimeError, TypeError):
-            pass
-        try:
-            search_worker.error.disconnect(self._on_search_error)
-        except (RuntimeError, TypeError):
-            pass
-        try:
-            search_worker.finished.disconnect(search_thread.quit)
-        except (RuntimeError, TypeError):
-            pass
-        try:
-            search_worker.error.disconnect(search_thread.quit)
-        except (RuntimeError, TypeError):
-            pass
+        safe_disconnect_multiple([
+            (search_worker.progress, self._on_search_progress),
+            (search_worker.finished, self._on_search_done),
+            (search_worker.error, self._on_search_error),
+            (search_worker.finished, search_thread.quit),
+            (search_worker.error, search_thread.quit),
+        ])
         search_worker.deleteLater()
         search_thread.deleteLater()
         if self._search_worker is search_worker:
@@ -592,26 +573,13 @@ class AutoTagPanel(QDialog):
         apply_worker = self._apply_worker
         apply_thread = self._apply_thread
         if apply_worker and apply_thread:
-            try:
-                apply_worker.progress.disconnect(self._on_apply_progress)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                apply_worker.finished.disconnect(self._on_apply_done)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                apply_worker.error.disconnect(self._on_apply_error)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                apply_worker.finished.disconnect(apply_thread.quit)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                apply_worker.error.disconnect(apply_thread.quit)
-            except (RuntimeError, TypeError):
-                pass
+            safe_disconnect_multiple([
+                (apply_worker.progress, self._on_apply_progress),
+                (apply_worker.finished, self._on_apply_done),
+                (apply_worker.error, self._on_apply_error),
+                (apply_worker.finished, apply_thread.quit),
+                (apply_worker.error, apply_thread.quit),
+            ])
         if apply_worker:
             apply_worker.deleteLater()
             self._apply_worker = None

@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from musicorg.core.scanner import AudioFile
 from musicorg.ui.widgets.dir_picker import DirPicker
 from musicorg.ui.widgets.progress_bar import ProgressIndicator
+from musicorg.ui.utils import safe_disconnect_multiple
 from musicorg.workers.scan_worker import ScanWorker
 
 PATH_ROLE = int(Qt.ItemDataRole.UserRole)
@@ -501,34 +502,15 @@ class RawFilesPanel(QWidget):
         scan_worker = self._scan_worker
         scan_thread = self._scan_thread
         if scan_worker and scan_thread:
-            try:
-                scan_worker.progress.disconnect(self._on_scan_progress)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                scan_worker.finished.disconnect(self._on_scan_finished)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                scan_worker.error.disconnect(self._on_scan_error)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                scan_worker.cancelled.disconnect(self._on_scan_cancelled)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                scan_worker.finished.disconnect(scan_thread.quit)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                scan_worker.error.disconnect(scan_thread.quit)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                scan_worker.cancelled.disconnect(scan_thread.quit)
-            except (RuntimeError, TypeError):
-                pass
+            safe_disconnect_multiple([
+                (scan_worker.progress, self._on_scan_progress),
+                (scan_worker.finished, self._on_scan_finished),
+                (scan_worker.error, self._on_scan_error),
+                (scan_worker.cancelled, self._on_scan_cancelled),
+                (scan_worker.finished, scan_thread.quit),
+                (scan_worker.error, scan_thread.quit),
+                (scan_worker.cancelled, scan_thread.quit),
+            ])
         if scan_worker:
             scan_worker.deleteLater()
             self._scan_worker = None

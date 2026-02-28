@@ -26,6 +26,7 @@ from musicorg.core.autotagger import MatchCandidate
 from musicorg.core.tagger import TagManager
 from musicorg.ui.widgets.match_list import MatchList
 from musicorg.ui.widgets.progress_bar import ProgressIndicator
+from musicorg.ui.utils import safe_disconnect_multiple
 from musicorg.workers.artwork_worker import (
     ArtworkApplyResult,
     ArtworkApplyWorker,
@@ -631,26 +632,13 @@ class ArtworkDownloaderPanel(QDialog):
         search_worker: ArtworkSearchWorker,
         search_thread: QThread,
     ) -> None:
-        try:
-            search_worker.progress.disconnect(self._on_search_progress)
-        except (RuntimeError, TypeError):
-            pass
-        try:
-            search_worker.finished.disconnect(self._on_search_done)
-        except (RuntimeError, TypeError):
-            pass
-        try:
-            search_worker.error.disconnect(self._on_search_error)
-        except (RuntimeError, TypeError):
-            pass
-        try:
-            search_worker.finished.disconnect(search_thread.quit)
-        except (RuntimeError, TypeError):
-            pass
-        try:
-            search_worker.error.disconnect(search_thread.quit)
-        except (RuntimeError, TypeError):
-            pass
+        safe_disconnect_multiple([
+            (search_worker.progress, self._on_search_progress),
+            (search_worker.finished, self._on_search_done),
+            (search_worker.error, self._on_search_error),
+            (search_worker.finished, search_thread.quit),
+            (search_worker.error, search_thread.quit),
+        ])
         search_worker.deleteLater()
         search_thread.deleteLater()
         if self._search_worker is search_worker:
@@ -663,26 +651,13 @@ class ArtworkDownloaderPanel(QDialog):
         preview_worker: ArtworkPreviewWorker,
         preview_thread: QThread,
     ) -> None:
-        try:
-            preview_worker.progress.disconnect(self._on_preview_progress)
-        except (RuntimeError, TypeError):
-            pass
-        try:
-            preview_worker.finished.disconnect(self._on_preview_done)
-        except (RuntimeError, TypeError):
-            pass
-        try:
-            preview_worker.error.disconnect(self._on_preview_error)
-        except (RuntimeError, TypeError):
-            pass
-        try:
-            preview_worker.finished.disconnect(preview_thread.quit)
-        except (RuntimeError, TypeError):
-            pass
-        try:
-            preview_worker.error.disconnect(preview_thread.quit)
-        except (RuntimeError, TypeError):
-            pass
+        safe_disconnect_multiple([
+            (preview_worker.progress, self._on_preview_progress),
+            (preview_worker.finished, self._on_preview_done),
+            (preview_worker.error, self._on_preview_error),
+            (preview_worker.finished, preview_thread.quit),
+            (preview_worker.error, preview_thread.quit),
+        ])
         preview_worker.deleteLater()
         preview_thread.deleteLater()
         if self._preview_worker is preview_worker:
@@ -695,26 +670,13 @@ class ArtworkDownloaderPanel(QDialog):
         apply_worker: ArtworkApplyWorker,
         apply_thread: QThread,
     ) -> None:
-        try:
-            apply_worker.progress.disconnect(self._on_apply_progress)
-        except (RuntimeError, TypeError):
-            pass
-        try:
-            apply_worker.finished.disconnect(self._on_apply_done)
-        except (RuntimeError, TypeError):
-            pass
-        try:
-            apply_worker.error.disconnect(self._on_apply_error)
-        except (RuntimeError, TypeError):
-            pass
-        try:
-            apply_worker.finished.disconnect(apply_thread.quit)
-        except (RuntimeError, TypeError):
-            pass
-        try:
-            apply_worker.error.disconnect(apply_thread.quit)
-        except (RuntimeError, TypeError):
-            pass
+        safe_disconnect_multiple([
+            (apply_worker.progress, self._on_apply_progress),
+            (apply_worker.finished, self._on_apply_done),
+            (apply_worker.error, self._on_apply_error),
+            (apply_worker.finished, apply_thread.quit),
+            (apply_worker.error, apply_thread.quit),
+        ])
         apply_worker.deleteLater()
         apply_thread.deleteLater()
         if self._apply_worker is apply_worker:
