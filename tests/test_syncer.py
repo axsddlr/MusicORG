@@ -63,6 +63,15 @@ class TestBuildDestPath:
         assert ":" not in result.name
         # The forward slash in AC/DC is handled by path splitting
 
+    def test_disc_variable_substitution(self):
+        tags = {"albumartist": "Artist", "album": "Album",
+                "disc": 1, "track": 1, "title": "Never Know"}
+        result = _build_dest_path(
+            Path("/dest"), tags, ".flac",
+            "$albumartist/$album/$disc-$track - $title"
+        )
+        assert result == Path("/dest/Artist/Album/1-01 - Never Know.flac")
+
 
 class TestFilenameEquivalence:
     def test_normalize_filename_strips_leading_numeric_prefix_chain(self):
@@ -263,6 +272,35 @@ class TestSyncManager:
 
         mgr._tag_manager.read = fake_read  # type: ignore[method-assign]
 
+        plan = mgr.plan_sync(source, dest)
+        assert plan.total == 1
+        assert plan.items[0].status == "exists"
+
+    def test_plan_sync_marks_exists_for_disc_track_format(self, tmp_path):
+        """Files named '1-01 - Never Know' are recognized when using $disc-$track - $title format."""
+        source = tmp_path / "source"
+        dest = tmp_path / "dest"
+        source.mkdir()
+        dest.mkdir()
+
+        src_song = source / "never_know.flac"
+        src_song.write_bytes(b"src")
+        existing_dest = dest / "Artist" / "Album" / "1-01 - Never Know.flac"
+        existing_dest.parent.mkdir(parents=True)
+        existing_dest.write_bytes(b"dst")
+
+        mgr = SyncManager(path_format="$albumartist/$album/$disc-$track - $title")
+
+        def fake_read(_path: Path) -> TagData:
+            return TagData(
+                title="Never Know",
+                albumartist="Artist",
+                album="Album",
+                track=1,
+                disc=1,
+            )
+
+        mgr._tag_manager.read = fake_read  # type: ignore[method-assign]
         plan = mgr.plan_sync(source, dest)
         assert plan.total == 1
         assert plan.items[0].status == "exists"

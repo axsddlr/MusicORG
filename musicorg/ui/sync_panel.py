@@ -45,6 +45,9 @@ class SyncPanel(QWidget):
         self._source_picker = DirPicker("Browse...")
         self._dest_picker = DirPicker("Browse...")
         self._format_edit = QLineEdit("$albumartist/$album/$track $title")
+        self._format_edit.setToolTip(
+            "Available: $albumartist, $artist, $album, $disc, $disc0, $track, $title, $year"
+        )
         self._reverse_sync_check = QCheckBox("Include reverse sync (Dest -> Source by track)")
 
         config_layout.addRow("Source Directory:", self._source_picker)
