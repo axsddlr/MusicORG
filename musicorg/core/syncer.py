@@ -73,6 +73,7 @@ def _build_dest_path(dest_root: Path, tags: dict, ext: str,
     path_str = path_str.replace("$album", album)
     disc = tags.get("disc", 0)
     path_str = path_str.replace("$disc0", f"{disc:02d}" if disc else "01")
+    path_str = path_str.replace("$disc-", f"{disc}-" if disc else "")
     path_str = path_str.replace("$disc", str(disc) if disc else "1")
     path_str = path_str.replace("$track", f"{track:02d}" if track else "00")
     path_str = path_str.replace("$title", title)

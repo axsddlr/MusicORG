@@ -72,6 +72,24 @@ class TestBuildDestPath:
         )
         assert result == Path("/dest/Artist/Album/1-01 - Never Know.flac")
 
+    def test_disc_dash_prefix_present_when_disc_set(self):
+        tags = {"albumartist": "Artist", "album": "Album",
+                "disc": 1, "track": 5, "title": "Song"}
+        result = _build_dest_path(
+            Path("/dest"), tags, ".flac",
+            "$albumartist/$album/$disc-$track - $title"
+        )
+        assert result == Path("/dest/Artist/Album/1-05 - Song.flac")
+
+    def test_disc_dash_prefix_absent_when_no_disc(self):
+        tags = {"albumartist": "Artist", "album": "Album",
+                "track": 5, "title": "Song"}
+        result = _build_dest_path(
+            Path("/dest"), tags, ".flac",
+            "$albumartist/$album/$disc-$track - $title"
+        )
+        assert result == Path("/dest/Artist/Album/05 - Song.flac")
+
     def test_slash_in_title_is_not_treated_as_path_separator(self):
         tags = {"albumartist": "6LACK", "album": "FREE 6LACK",
                 "track": 11, "title": "Alone / EA6"}
