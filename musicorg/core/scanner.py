@@ -6,7 +6,18 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-AUDIO_EXTENSIONS = {".mp3", ".flac", ".m4a", ".ogg", ".opus", ".wav", ".aiff", ".wv"}
+AUDIO_EXTENSIONS = {
+    ".mp3",
+    ".flac",
+    ".m4a",
+    ".ogg",
+    ".opus",
+    ".wav",
+    ".aiff",
+    ".wv",
+    ".ape",  # Monkey's Audio
+    ".tak",  # Tom's lossless Audio Kompressor
+}
 
 
 @dataclass

@@ -174,6 +174,14 @@ class MainWindow(QMainWindow):
             handler=self._open_settings,
         )
         settings_menu.addAction(prefs_action)
+        select_all_action = create_bound_action(
+            parent=self,
+            text="Select &All Tracks",
+            keybind_id="app.select_all",
+            registry=self._keybind_registry,
+            handler=self._select_all_tracks,
+        )
+        settings_menu.addAction(select_all_action)
         theme_action = QAction("&Themes...", self)
         theme_action.triggered.connect(self._open_themes)
         settings_menu.addAction(theme_action)
@@ -302,6 +310,16 @@ class MainWindow(QMainWindow):
         if active_name == "raw_files":
             return "Raw Files"
         return "Source or Raw Files"
+
+    def _select_all_tracks(self) -> None:
+        """Select all tracks in the currently active panel."""
+        active_name = self._active_selection_panel_name()
+        if active_name == "source":
+            self._source_panel.select_all_visible()
+        elif active_name == "raw_files":
+            self._raw_files_panel.select_all_visible()
+        else:
+            self._status_strip.show_message("No panel active to select tracks in", 2400)
 
     def _update_tools_availability(self, total: int, selected: int) -> None:
         _ = total

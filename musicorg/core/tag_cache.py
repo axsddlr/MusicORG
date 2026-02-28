@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Iterable
 
@@ -33,11 +34,15 @@ CREATE TABLE IF NOT EXISTS tag_cache (
 
 
 class TagCache:
-    """Caches TagData per file path and file fingerprint."""
+    """Caches TagData per file path and file fingerprint.
+    
+    Thread-safe for concurrent reads and writes using a reentrant lock.
+    """
 
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = Path(db_path)
         self._conn: sqlite3.Connection | None = None
+        self._lock = threading.RLock()  # Reentrant lock for thread-safe writes
 
     def open(self) -> None:
         """Open the cache DB and initialize schema."""
@@ -49,6 +54,9 @@ class TagCache:
         conn.execute("PRAGMA synchronous=NORMAL;")
         conn.execute(SCHEMA_SQL)
         # Migrate existing DBs: add missing columns
+        # SECURITY: Column definitions are hardcoded literals below.
+        # Never make column names dynamic or user-controlled, as ALTER TABLE
+        # statements use f-strings which would be vulnerable to SQL injection.
         for col_def in (
             "bitrate INTEGER NOT NULL DEFAULT 0",
             "comment TEXT NOT NULL DEFAULT ''",
@@ -111,7 +119,7 @@ class TagCache:
         self,
         entries: Iterable[tuple[str | Path, int, int, TagData]],
     ) -> None:
-        """Batch upsert cache records."""
+        """Batch upsert cache records. Thread-safe."""
         rows = [
             (
                 self._normalize_path(path),
@@ -137,58 +145,62 @@ class TagCache:
         ]
         if not rows:
             return
-        conn = self._conn_or_raise()
-        conn.executemany(
-            """
-            INSERT INTO tag_cache (
-                path, mtime_ns, size,
-                title, artist, album, albumartist,
-                track, disc, year, genre, composer,
-                duration, bitrate, artwork_data, artwork_mime,
-                comment, lyrics
+        
+        with self._lock:
+            conn = self._conn_or_raise()
+            conn.executemany(
+                """
+                INSERT INTO tag_cache (
+                    path, mtime_ns, size,
+                    title, artist, album, albumartist,
+                    track, disc, year, genre, composer,
+                    duration, bitrate, artwork_data, artwork_mime,
+                    comment, lyrics
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(path) DO UPDATE SET
+                    mtime_ns = excluded.mtime_ns,
+                    size = excluded.size,
+                    title = excluded.title,
+                    artist = excluded.artist,
+                    album = excluded.album,
+                    albumartist = excluded.albumartist,
+                    track = excluded.track,
+                    disc = excluded.disc,
+                    year = excluded.year,
+                    genre = excluded.genre,
+                    composer = excluded.composer,
+                    duration = excluded.duration,
+                    bitrate = excluded.bitrate,
+                    artwork_data = excluded.artwork_data,
+                    artwork_mime = excluded.artwork_mime,
+                    comment = excluded.comment,
+                    lyrics = excluded.lyrics
+                """,
+                rows,
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(path) DO UPDATE SET
-                mtime_ns = excluded.mtime_ns,
-                size = excluded.size,
-                title = excluded.title,
-                artist = excluded.artist,
-                album = excluded.album,
-                albumartist = excluded.albumartist,
-                track = excluded.track,
-                disc = excluded.disc,
-                year = excluded.year,
-                genre = excluded.genre,
-                composer = excluded.composer,
-                duration = excluded.duration,
-                bitrate = excluded.bitrate,
-                artwork_data = excluded.artwork_data,
-                artwork_mime = excluded.artwork_mime,
-                comment = excluded.comment,
-                lyrics = excluded.lyrics
-            """,
-            rows,
-        )
-        conn.commit()
+            conn.commit()
 
     def invalidate(self, path: str | Path) -> None:
         """Remove one path from cache."""
         self.invalidate_many([path])
 
     def invalidate_many(self, paths: Iterable[str | Path]) -> None:
-        """Remove multiple paths from cache."""
+        """Remove multiple paths from cache. Thread-safe."""
         rows = [(self._normalize_path(path),) for path in paths]
         if not rows:
             return
-        conn = self._conn_or_raise()
-        conn.executemany("DELETE FROM tag_cache WHERE path = ?", rows)
-        conn.commit()
+        with self._lock:
+            conn = self._conn_or_raise()
+            conn.executemany("DELETE FROM tag_cache WHERE path = ?", rows)
+            conn.commit()
 
     def clear(self) -> None:
-        """Delete all cache entries."""
-        conn = self._conn_or_raise()
-        conn.execute("DELETE FROM tag_cache")
-        conn.commit()
+        """Delete all cache entries. Thread-safe."""
+        with self._lock:
+            conn = self._conn_or_raise()
+            conn.execute("DELETE FROM tag_cache")
+            conn.commit()
 
     def _conn_or_raise(self) -> sqlite3.Connection:
         if self._conn is None:

@@ -64,6 +64,13 @@ DEFAULT_KEYBINDS: tuple[KeybindSpec, ...] = (
         category="Application",
     ),
     KeybindSpec(
+        id="app.select_all",
+        label="Select All Tracks",
+        default_sequence="Ctrl+A",
+        description="Select all tracks in the current view.",
+        category="Application",
+    ),
+    KeybindSpec(
         id="tools.open_tag_editor",
         label="Open Tag Editor",
         default_sequence="Ctrl+E",

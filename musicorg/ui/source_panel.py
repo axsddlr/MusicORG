@@ -230,6 +230,11 @@ class SourcePanel(QWidget):
         if visible_paths:
             self._selection_manager.select_all(visible_paths)
 
+    def select_all_visible(self) -> None:
+        """Public method to select all visible tracks (for keyboard shortcut)."""
+        self._select_all_visible_tracks()
+        self._emit_selection_stats()
+
     def _deselect_all_tracks(self) -> None:
         self._selection_manager.clear()
 

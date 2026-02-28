@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from musicorg.ui.keybindings import (
     AlbumArtworkSelectionMode,
@@ -15,6 +15,14 @@ from musicorg.ui.keybindings import (
 from musicorg.ui.models.file_table_model import FileTableRow
 from musicorg.ui.widgets.album_card import AlbumCard
 from musicorg.ui.widgets.selection_manager import SelectionManager
+
+# Layout constants for album card height estimation
+_CARD_COVER_AND_HEADER_HEIGHT = 80  # px for cover art + card header
+_CARD_META_HEIGHT = 20  # px for metadata section
+_CARD_TRACK_ROW_HEIGHT = 30  # px per track row in grid
+_CARD_DISC_HEADER_HEIGHT = 20  # px per disc header separator
+_MIN_SLOT_HEIGHT = 40  # minimum placeholder height
+_MIN_BUFFER_HEIGHT = 120  # minimum buffer pixels for materialization
 
 
 class AlbumBrowser(QScrollArea):
@@ -55,6 +63,12 @@ class AlbumBrowser(QScrollArea):
         self._album_artwork_selection_mode: AlbumArtworkSelectionMode = (
             DEFAULT_ALBUM_ARTWORK_SELECTION_MODE
         )
+        self._empty_label = QLabel("No albums found.\nScan a directory to begin.")
+        self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_label.setObjectName("EmptyStateLabel")
+        self._empty_label.setStyleSheet("color: #888; font-size: 14px; padding: 40px;")
+        self._empty_label.setVisible(False)
+        self._layout.addWidget(self._empty_label)
 
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
 
@@ -74,6 +88,11 @@ class AlbumBrowser(QScrollArea):
         self._album_data = [(name, albums[name]) for name in sorted(albums)]
         ordered_paths = [row.path for _, rows in self._album_data for row in rows]
         selection_manager.set_ordered_paths(ordered_paths)
+
+        if not self._album_data:
+            self._empty_label.setText("No albums found.\nScan a directory to begin.")
+            self._empty_label.setVisible(True)
+            return
 
         for _album_name, rows in self._album_data:
             placeholder = self._make_placeholder(self._estimate_card_height(rows))
@@ -100,6 +119,7 @@ class AlbumBrowser(QScrollArea):
         self._slots = []
         self._materialized.clear()
         self._update_scheduled = False
+        self._empty_label.setVisible(True)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -120,6 +140,9 @@ class AlbumBrowser(QScrollArea):
     def _update_visible_cards(self) -> None:
         if not self._slots:
             return
+
+        # Hide empty label when there are albums
+        self._empty_label.setVisible(False)
 
         viewport_top = self.verticalScrollBar().value()
         viewport_bottom = viewport_top + self.viewport().height()
@@ -195,7 +218,7 @@ class AlbumBrowser(QScrollArea):
     @staticmethod
     def _make_placeholder(height: int) -> QWidget:
         slot = QWidget()
-        slot.setFixedHeight(max(40, height))
+        slot.setFixedHeight(max(_MIN_SLOT_HEIGHT, height))
         return slot
 
     @staticmethod
@@ -206,12 +229,16 @@ class AlbumBrowser(QScrollArea):
             discs[disc] = discs.get(disc, 0) + 1
         grid_rows = sum(math.ceil(count / 2) for count in discs.values())
         disc_header_rows = max(0, len(discs) - 1)
-        # 80px cover+header, 20px meta, 30px per grid row, 20px per disc header
-        return int(80 + 20 + (grid_rows * 30) + (disc_header_rows * 20))
+        return int(
+            _CARD_COVER_AND_HEADER_HEIGHT
+            + _CARD_META_HEIGHT
+            + (grid_rows * _CARD_TRACK_ROW_HEIGHT)
+            + (disc_header_rows * _CARD_DISC_HEADER_HEIGHT)
+        )
 
     def _buffer_pixels(self, cards: int) -> int:
         if not self._slots:
             return 0
-        heights = [max(s.height(), s.sizeHint().height(), 40) for s in self._slots]
+        heights = [max(s.height(), s.sizeHint().height(), _MIN_SLOT_HEIGHT) for s in self._slots]
         avg = sum(heights) / len(heights)
-        return int(max(120, avg * cards))
+        return int(max(_MIN_BUFFER_HEIGHT, avg * cards))

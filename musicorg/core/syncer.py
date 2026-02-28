@@ -59,7 +59,10 @@ def _sanitize_tag_value(value: str) -> str:
 
 def _build_dest_path(dest_root: Path, tags: dict, ext: str,
                      path_format: str, source_path: Path | None = None) -> Path:
-    """Build destination path from tags and format string."""
+    """Build destination path from tags and format string.
+    
+    Validates that the resolved path stays within dest_root to prevent path traversal.
+    """
     artist = _sanitize_tag_value(tags.get("albumartist") or tags.get("artist") or "Unknown Artist")
     album = _sanitize_tag_value(tags.get("album") or "Unknown Album")
     track = tags.get("track", 0)
@@ -88,7 +91,17 @@ def _build_dest_path(dest_root: Path, tags: dict, ext: str,
     # Last part is filename, add extension
     sanitized[-1] = sanitized[-1] + ext
 
-    return dest_root.joinpath(*sanitized)
+    result = dest_root.joinpath(*sanitized)
+    
+    # Validate result is under dest_root to prevent path traversal
+    try:
+        result.resolve().relative_to(dest_root.resolve())
+    except ValueError:
+        # Path resolves outside destination directory; fall back to safe default
+        safe_filename = _sanitize_filename(source_path.stem if source_path else "unknown") + ext
+        result = dest_root / safe_filename
+    
+    return result
 
 
 def _normalize_track_value(value: str) -> str:
@@ -260,9 +273,17 @@ class SyncManager:
         return plan
 
     def execute_sync(self, plan: SyncPlan,
-                     progress_cb: Callable[[int, int, str], None] | None = None
+                     progress_cb: Callable[[int, int, str], None] | None = None,
+                     skip_existing: bool = True
                      ) -> SyncPlan:
-        """Execute the copy operations in the plan."""
+        """Execute the copy operations in the plan.
+        
+        Args:
+            plan: The sync plan to execute.
+            progress_cb: Optional callback(current, total, message) for progress updates.
+            skip_existing: If True, skip files that already exist at destination.
+                          If False, overwrite existing files.
+        """
         self._cancelled = False
         pending = [item for item in plan.items if item.status == "pending"]
 
@@ -272,6 +293,11 @@ class SyncManager:
 
             if progress_cb:
                 progress_cb(i + 1, len(pending), item.source.name)
+
+            # Extra safety check: verify destination doesn't exist unless overwriting
+            if skip_existing and item.dest.exists():
+                item.status = "exists"
+                continue
 
             try:
                 item.dest.parent.mkdir(parents=True, exist_ok=True)

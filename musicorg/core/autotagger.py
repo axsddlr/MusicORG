@@ -80,10 +80,16 @@ class AutoTagger:
             try:
                 import musicbrainzngs
 
-                musicbrainzngs.set_useragent("MusicOrg", __version__, "https://musicbrainz.org")
+                musicbrainzngs.set_useragent(
+                    "MusicOrg",
+                    __version__,
+                    "https://musicbrainz.org",
+                    timeout=10,
+                )
                 AutoTagger._mb_useragent_set = True
             except Exception:
                 # Defer import/setup errors to search methods.
+                # Note: older musicbrainzngs versions don't support timeout parameter.
                 pass
 
     def search_album(
@@ -357,6 +363,9 @@ class AutoTagger:
             query["release_title"] = album
 
         client = discogs_client.Client("MusicOrg/" + __version__, user_token=self._discogs_token)
+        # Set timeout on the underlying requests session to prevent hangs
+        if hasattr(client, "_session") and hasattr(client._session, "timeout"):
+            client._session.timeout = 10  # type: ignore[attr-defined]
         releases = client.search(**query)
 
         candidates: list[MatchCandidate] = []
@@ -486,6 +495,9 @@ class AutoTagger:
             return []
 
         client = discogs_client.Client("MusicOrg/" + __version__, user_token=self._discogs_token)
+        # Set timeout on the underlying requests session to prevent hangs
+        if hasattr(client, "_session") and hasattr(client._session, "timeout"):
+            client._session.timeout = 10  # type: ignore[attr-defined]
         releases = client.search(title, type="release")
 
         candidates: list[MatchCandidate] = []

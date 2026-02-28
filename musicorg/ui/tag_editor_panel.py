@@ -225,7 +225,11 @@ class TagEditorPanel(QDialog):
             self._progress.start("Saved!")
             self._progress.finish(f"Saved tags for {path.name}")
         except Exception as exc:
-            QMessageBox.critical(self, "Save Error", str(exc))
+            QMessageBox.critical(
+                self,
+                "Save Error",
+                f"Failed to save tags for:\n{path}\n\nError: {exc}"
+            )
 
     def _apply_bulk_tags(self) -> None:
         if not self._files:
@@ -323,7 +327,11 @@ class TagEditorPanel(QDialog):
         self._progress.finish(f"Error: {error_message}")
         self._save_btn.setEnabled(True)
         self._revert_btn.setEnabled(True)
-        QMessageBox.critical(self, "Save Error", error_message)
+        QMessageBox.critical(
+            self,
+            "Save Error",
+            f"Bulk save failed:\n{error_message}"
+        )
 
     @staticmethod
     def _coerce_save_summary(payload: object) -> tuple[int, list[TagWriteFailure]]:

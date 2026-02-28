@@ -186,6 +186,10 @@ class RawFilesPanel(QWidget):
         self._tree.blockSignals(False)
         self._on_selection_changed()
 
+    def select_all_visible(self) -> None:
+        """Public method to select all visible files (for keyboard shortcut)."""
+        self._select_all_files()
+
     def _deselect_all_files(self) -> None:
         self._tree.clearSelection()
 

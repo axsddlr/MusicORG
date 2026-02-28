@@ -26,6 +26,14 @@ from musicorg.ui.keybindings import (
 from musicorg.ui.models.file_table_model import FileTableRow
 from musicorg.ui.widgets.selection_manager import SelectionManager
 
+# Layout constants for album card
+_CARD_MARGIN = 10  # px
+_CARD_SPACING = 14  # px between main sections
+_CARD_COVER_SIZE = 120  # px for album artwork
+_CARD_COVER_MIN_SIZE = 108  # px minimum cover size
+_CARD_COVER_MAX_SIZE = 132  # px maximum cover size
+_CARD_TRACK_NUM_WIDTH = 24  # px for track number column
+
 
 def _format_duration(seconds: float) -> str:
     """Format seconds as m:ss."""
@@ -74,7 +82,7 @@ class TrackRow(QFrame):
         # Track number
         track_num = QLabel(str(row.tags.track) if row.tags.track else "-")
         track_num.setObjectName("TrackNumber")
-        track_num.setFixedWidth(24)
+        track_num.setFixedWidth(_CARD_TRACK_NUM_WIDTH)
         track_num.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(track_num)
 
@@ -194,14 +202,14 @@ class AlbumCard(QFrame):
         )
 
         main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(14)
+        main_layout.setContentsMargins(_CARD_MARGIN, _CARD_MARGIN, _CARD_MARGIN, _CARD_MARGIN)
+        main_layout.setSpacing(_CARD_SPACING)
 
-        # Cover art (120x120)
+        # Cover art
         self._cover_label = QLabel()
         self._cover_label.setObjectName("AlbumCover")
-        self._cover_label.setMinimumSize(108, 108)
-        self._cover_label.setMaximumSize(132, 132)
+        self._cover_label.setMinimumSize(_CARD_COVER_MIN_SIZE, _CARD_COVER_MIN_SIZE)
+        self._cover_label.setMaximumSize(_CARD_COVER_MAX_SIZE, _CARD_COVER_MAX_SIZE)
         self._cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         artwork = self._find_artwork(rows)
         self._artwork_data: bytes = artwork
@@ -209,7 +217,7 @@ class AlbumCard(QFrame):
             pixmap = QPixmap()
             if pixmap.loadFromData(artwork):
                 scaled = pixmap.scaled(
-                    120, 120,
+                    _CARD_COVER_SIZE, _CARD_COVER_SIZE,
                     Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation,
                 )
