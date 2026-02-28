@@ -155,6 +155,18 @@ def _track_identity(path: Path, tags: dict) -> tuple[str, str, str, int, int]:
     )
 
 
+def _identity_tuple(path: Path, tags: dict) -> tuple[str, str, str]:
+    """(norm_artist, norm_album, norm_title) for loose cross-directory matching."""
+    artist = tags.get("albumartist") or tags.get("artist") or ""
+    album = tags.get("album") or ""
+    title = tags.get("title") or path.stem
+    return (
+        _normalize_track_value(str(artist)),
+        _normalize_track_value(str(album)),
+        _normalize_track_value(str(title)),
+    )
+
+
 class SyncManager:
     """Plans and executes non-destructive file copy operations."""
 
@@ -174,13 +186,25 @@ class SyncManager:
         dest_dir = Path(dest_dir)
 
         source_files = FileScanner(source_dir).scan()
-        dest_files = FileScanner(dest_dir).scan() if include_reverse else []
-        total_steps = len(source_files) + len(dest_files)
+        dest_files = FileScanner(dest_dir).scan()
+        total_steps = len(source_files) + (len(dest_files) if include_reverse else 0)
         step = 0
         plan = SyncPlan()
         source_track_keys: set[tuple[str, str, str, int, int]] = set()
         dest_dir_keys: dict[Path, set[tuple[str, str]]] = {}
         source_dir_keys: dict[Path, set[tuple[str, str]]] = {}
+
+        # Pre-scan dest to build identity set (third fallback for exists-check).
+        dest_tag_cache: dict[Path, dict] = {}
+        dest_identity_set: set[tuple[str, str, str]] = set()
+        for af in dest_files:
+            try:
+                tags = self._tag_manager.read(af.path)
+                tag_dict = tags.as_dict()
+            except Exception:
+                tag_dict = {}
+            dest_tag_cache[af.path] = tag_dict
+            dest_identity_set.add(_identity_tuple(af.path, tag_dict))
 
         for af in source_files:
             if self._cancelled:
@@ -201,7 +225,8 @@ class SyncManager:
                                          self._path_format)
 
             item = SyncItem(source=af.path, dest=dest_path)
-            if _path_exists_or_equivalent(dest_path, dest_dir_keys):
+            if (_path_exists_or_equivalent(dest_path, dest_dir_keys)
+                    or _identity_tuple(af.path, tag_dict) in dest_identity_set):
                 item.status = "exists"
             plan.items.append(item)
 
@@ -214,11 +239,8 @@ class SyncManager:
                 if progress_cb:
                     progress_cb(step, total_steps or 1, f"reverse: {af.path.name}")
 
-                try:
-                    tags = self._tag_manager.read(af.path)
-                    tag_dict = tags.as_dict()
-                except Exception:
-                    tag_dict = {}
+                # Reuse cached tags from pre-scan pass.
+                tag_dict = dest_tag_cache.get(af.path, {})
 
                 key = _track_identity(af.path, tag_dict)
                 if key in source_track_keys:

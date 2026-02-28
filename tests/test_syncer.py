@@ -7,6 +7,7 @@ import pytest
 from musicorg.core.syncer import (
     SyncItem, SyncManager, SyncPlan,
     _build_dest_path, _normalize_filename_for_match, _sanitize_filename,
+    _identity_tuple,
 )
 from musicorg.core.tagger import TagData
 
@@ -382,6 +383,100 @@ class TestSyncManager:
                 albumartist="Spectre",
                 album="Spectre Mashups",
                 track=0,
+            )
+
+        mgr._tag_manager.read = fake_read  # type: ignore[method-assign]
+
+        plan = mgr.plan_sync(source, dest)
+        assert plan.total == 1
+        assert plan.items[0].status == "exists"
+
+    # ------------------------------------------------------------------
+    # Tag identity fallback tests (third fallback: dest tag pre-scan)
+    # ------------------------------------------------------------------
+
+    def test_identity_fallback_album_folder_mismatch(self, tmp_path):
+        """Album tag '' → computed dest is 'Unknown Album/', actual dest is 'Soundcloud/'."""
+        source = tmp_path / "source"
+        dest = tmp_path / "dest"
+        source.mkdir()
+        dest.mkdir()
+
+        src_song = source / "some_song.mp3"
+        src_song.write_bytes(b"src")
+
+        # Actual file lives under Soundcloud, not Unknown Album
+        actual_dest = dest / "Kendrick Lamar" / "Soundcloud" / "# - Some Song.mp3"
+        actual_dest.parent.mkdir(parents=True)
+        actual_dest.write_bytes(b"dst")
+
+        mgr = SyncManager(path_format="$albumartist/$album/$track $title")
+
+        def fake_read(path: Path) -> TagData:
+            # Both source and dest have the same empty album tag;
+            # only the folder name differs ("Soundcloud" vs computed "Unknown Album").
+            return TagData(title="Some Song", artist="Kendrick Lamar", album="")
+
+        mgr._tag_manager.read = fake_read  # type: ignore[method-assign]
+
+        plan = mgr.plan_sync(source, dest)
+        assert plan.total == 1
+        assert plan.items[0].status == "exists"
+
+    def test_identity_fallback_artist_embedded_in_filename(self, tmp_path):
+        """Dest filename '# - J. Cole - Family Matters.mp3' should still match source tag."""
+        source = tmp_path / "source"
+        dest = tmp_path / "dest"
+        source.mkdir()
+        dest.mkdir()
+
+        src_song = source / "family_matters.mp3"
+        src_song.write_bytes(b"src")
+
+        actual_dest = dest / "J_ Cole" / "Album" / "# - J. Cole - Family Matters.mp3"
+        actual_dest.parent.mkdir(parents=True)
+        actual_dest.write_bytes(b"dst")
+
+        mgr = SyncManager(path_format="$artist/$album/$track $title")
+
+        def fake_read(path: Path) -> TagData:
+            if path.parent == source:
+                return TagData(title="Family Matters", artist="J. Cole", album="Album")
+            # Dest file has the correct title tag
+            return TagData(title="Family Matters", artist="J. Cole", album="Album")
+
+        mgr._tag_manager.read = fake_read  # type: ignore[method-assign]
+
+        plan = mgr.plan_sync(source, dest)
+        assert plan.total == 1
+        assert plan.items[0].status == "exists"
+
+    def test_identity_fallback_album_folder_suffix_mismatch(self, tmp_path):
+        """Album tag 'GNX' but folder 'GNX [2024]' — computed parent doesn't exist."""
+        source = tmp_path / "source"
+        dest = tmp_path / "dest"
+        source.mkdir()
+        dest.mkdir()
+
+        src_song = source / "real_thinkers.mp3"
+        src_song.write_bytes(b"src")
+
+        # Folder has year suffix the tag doesn't have
+        actual_dest = dest / "Kendrick Lamar" / "GNX [2024]" / "1-01 - Real Thinkers.mp3"
+        actual_dest.parent.mkdir(parents=True)
+        actual_dest.write_bytes(b"dst")
+
+        mgr = SyncManager(path_format="$albumartist/$album/$disc-$track - $title")
+
+        def fake_read(path: Path) -> TagData:
+            # Both source and dest share the same album tag "GNX";
+            # only the folder name has the year suffix ("GNX [2024]" vs computed "GNX").
+            return TagData(
+                title="Real Thinkers",
+                albumartist="Kendrick Lamar",
+                album="GNX",
+                track=1,
+                disc=1,
             )
 
         mgr._tag_manager.read = fake_read  # type: ignore[method-assign]
