@@ -58,12 +58,14 @@ def _sanitize_tag_value(value: str) -> str:
 
 
 def _build_dest_path(dest_root: Path, tags: dict, ext: str,
-                     path_format: str) -> Path:
+                     path_format: str, source_path: Path | None = None) -> Path:
     """Build destination path from tags and format string."""
     artist = _sanitize_tag_value(tags.get("albumartist") or tags.get("artist") or "Unknown Artist")
     album = _sanitize_tag_value(tags.get("album") or "Unknown Album")
     track = tags.get("track", 0)
-    title = _sanitize_tag_value(tags.get("title") or "Unknown Title")
+    title = _sanitize_tag_value(
+        tags.get("title") or (source_path.stem if source_path else None) or "Unknown Title"
+    )
     year = tags.get("year", 0)
 
     # Build from format string by substituting variables
@@ -222,7 +224,7 @@ class SyncManager:
             source_track_keys.add(_track_identity(af.path, tag_dict))
 
             dest_path = _build_dest_path(dest_dir, tag_dict, af.extension,
-                                         self._path_format)
+                                         self._path_format, af.path)
 
             item = SyncItem(source=af.path, dest=dest_path)
             if (_path_exists_or_equivalent(dest_path, dest_dir_keys)
@@ -248,7 +250,7 @@ class SyncManager:
                 source_track_keys.add(key)
 
                 source_path = _build_dest_path(source_dir, tag_dict, af.extension,
-                                               self._path_format)
+                                               self._path_format, af.path)
 
                 item = SyncItem(source=af.path, dest=source_path)
                 if _path_exists_or_equivalent(source_path, source_dir_keys):
