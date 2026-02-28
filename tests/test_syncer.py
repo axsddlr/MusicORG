@@ -72,6 +72,17 @@ class TestBuildDestPath:
         )
         assert result == Path("/dest/Artist/Album/1-01 - Never Know.flac")
 
+    def test_slash_in_title_is_not_treated_as_path_separator(self):
+        tags = {"albumartist": "6LACK", "album": "FREE 6LACK",
+                "track": 11, "title": "Alone / EA6"}
+        result = _build_dest_path(
+            Path("/dest"), tags, ".flac",
+            "$albumartist/$album/$track $title"
+        )
+        # Title slash must not create a subdirectory
+        assert result.parent == Path("/dest/6LACK/FREE 6LACK")
+        assert result.name == "11 Alone _ EA6.flac"
+
 
 class TestFilenameEquivalence:
     def test_normalize_filename_strips_leading_numeric_prefix_chain(self):
@@ -272,6 +283,34 @@ class TestSyncManager:
 
         mgr._tag_manager.read = fake_read  # type: ignore[method-assign]
 
+        plan = mgr.plan_sync(source, dest)
+        assert plan.total == 1
+        assert plan.items[0].status == "exists"
+
+    def test_plan_sync_marks_exists_when_title_has_slash(self, tmp_path):
+        """Title tag 'Alone / EA6' should match dest file '1-11 - Alone   EA6.flac'."""
+        source = tmp_path / "source"
+        dest = tmp_path / "dest"
+        source.mkdir()
+        dest.mkdir()
+
+        src_song = source / "alone.flac"
+        src_song.write_bytes(b"src")
+        existing_dest = dest / "6LACK" / "FREE 6LACK" / "1-11 - Alone   EA6.flac"
+        existing_dest.parent.mkdir(parents=True)
+        existing_dest.write_bytes(b"dst")
+
+        mgr = SyncManager(path_format="$albumartist/$album/$track $title")
+
+        def fake_read(_path: Path) -> TagData:
+            return TagData(
+                title="Alone / EA6",
+                albumartist="6LACK",
+                album="FREE 6LACK",
+                track=11,
+            )
+
+        mgr._tag_manager.read = fake_read  # type: ignore[method-assign]
         plan = mgr.plan_sync(source, dest)
         assert plan.total == 1
         assert plan.items[0].status == "exists"

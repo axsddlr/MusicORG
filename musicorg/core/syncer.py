@@ -52,13 +52,18 @@ def _sanitize_filename(name: str) -> str:
     return name or "_"
 
 
+def _sanitize_tag_value(value: str) -> str:
+    """Replace path separator characters in a tag value so they are not treated as path components."""
+    return value.replace("/", "_").replace("\\", "_")
+
+
 def _build_dest_path(dest_root: Path, tags: dict, ext: str,
                      path_format: str) -> Path:
     """Build destination path from tags and format string."""
-    artist = tags.get("albumartist") or tags.get("artist") or "Unknown Artist"
-    album = tags.get("album") or "Unknown Album"
+    artist = _sanitize_tag_value(tags.get("albumartist") or tags.get("artist") or "Unknown Artist")
+    album = _sanitize_tag_value(tags.get("album") or "Unknown Album")
     track = tags.get("track", 0)
-    title = tags.get("title") or "Unknown Title"
+    title = _sanitize_tag_value(tags.get("title") or "Unknown Title")
     year = tags.get("year", 0)
 
     # Build from format string by substituting variables
@@ -84,7 +89,7 @@ def _build_dest_path(dest_root: Path, tags: dict, ext: str,
 
 
 def _normalize_track_value(value: str) -> str:
-    return " ".join(value.strip().lower().split())
+    return " ".join(value.strip().lower().replace("_", " ").split())
 
 
 _LEADING_TRACK_PREFIX_RE = re.compile(
