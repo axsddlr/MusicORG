@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 import music_tag
+
+from musicorg.errors import (
+    ErrorCode,
+    MusicOrgError,
+    classify_exception,
+    format_error_for_user,
+)
 
 
 @dataclass
@@ -155,11 +162,27 @@ class TagManager:
     """Reads and writes tags for audio files using music-tag."""
 
     def read(self, path: str | Path) -> TagData:
-        """Read tags from an audio file."""
+        """Read tags from an audio file.
+        
+        Returns:
+            TagData object with tag values (empty strings/zeros if read fails).
+        
+        Raises:
+            MusicOrgError: If file cannot be accessed or is corrupt.
+        """
+        path = Path(path)
         try:
             f = music_tag.load_file(str(path))
-        except Exception:
-            return TagData()
+        except Exception as exc:
+            error = classify_exception(exc, path)
+            # Return empty tags for unreadable/corrupt files (backward compatible behavior)
+            if error.code in (
+                ErrorCode.FILE_NOT_FOUND,
+                ErrorCode.TAG_CORRUPT,
+                ErrorCode.TAG_UNSUPPORTED_FORMAT,
+            ):
+                return TagData()
+            raise error
 
         artwork_data: bytes | None = None
         artwork_mime = ""
@@ -194,34 +217,70 @@ class TagManager:
         )
 
     def write(self, path: str | Path, tags: TagData) -> None:
-        """Write tags to an audio file."""
+        """Write tags to an audio file.
+        
+        Args:
+            path: Path to the audio file.
+            tags: TagData object with tag values to write.
+        
+        Raises:
+            MusicOrgError: If file cannot be written or tags are invalid.
+        """
+        path = Path(path)
+        
         try:
             f = music_tag.load_file(str(path))
         except Exception as exc:
-            raise ValueError(f"Cannot open file for writing: {path}") from exc
+            error = classify_exception(exc, path)
+            match error.code:
+                case ErrorCode.FILE_NOT_FOUND:
+                    error.message = f"Cannot open file for writing: {path.name}"
+                    error.suggestion = "Verify the file exists and is not locked by another program."
+                case ErrorCode.FILE_ACCESS_DENIED:
+                    error.suggestion = "Right-click the file → Properties → uncheck 'Read-only', then try again."
+                case ErrorCode.FILE_LOCKED:
+                    error.suggestion = "Close any program using this file (media player, file explorer preview) and try again."
+                case ErrorCode.TAG_CORRUPT | ErrorCode.TAG_UNSUPPORTED_FORMAT:
+                    error.message = f"Cannot write tags: {path.name} has unsupported or corrupt format"
+                    error.suggestion = "This file format cannot be edited. Convert to MP3, FLAC, or M4A first."
+            raise error
 
-        f["tracktitle"] = tags.title
-        f["artist"] = tags.artist
-        f["album"] = tags.album
-        f["albumartist"] = tags.albumartist
-        f["tracknumber"] = tags.track
-        f["discnumber"] = tags.disc
-        f["year"] = tags.year
-        f["genre"] = tags.genre
-        f["composer"] = tags.composer
-        f["comment"] = tags.comment
-        f["lyrics"] = tags.lyrics
+        try:
+            f["tracktitle"] = tags.title
+            f["artist"] = tags.artist
+            f["album"] = tags.album
+            f["albumartist"] = tags.albumartist
+            f["tracknumber"] = tags.track
+            f["discnumber"] = tags.disc
+            f["year"] = tags.year
+            f["genre"] = tags.genre
+            f["composer"] = tags.composer
+            f["comment"] = tags.comment
+            f["lyrics"] = tags.lyrics
 
-        if tags.artwork_data is not None:
-            try:
-                if tags.artwork_data:
-                    f["artwork"] = _build_artwork(
-                        raw=tags.artwork_data,
-                        mime=tags.artwork_mime or "image/jpeg",
-                    )
-                else:
-                    f["artwork"] = None
-            except Exception as exc:
-                raise ValueError(f"Failed to embed artwork for {path}") from exc
+            if tags.artwork_data is not None:
+                try:
+                    if tags.artwork_data:
+                        f["artwork"] = _build_artwork(
+                            raw=tags.artwork_data,
+                            mime=tags.artwork_mime or "image/jpeg",
+                        )
+                    else:
+                        f["artwork"] = None
+                except Exception as exc:
+                    raise MusicOrgError(
+                        ErrorCode.TAG_WRITE_FAILED,
+                        message=f"Failed to embed artwork for {path.name}",
+                        path=path,
+                        suggestion="The artwork image format may not be supported. Try a different JPEG or PNG image.",
+                        details={"original": str(exc)},
+                    ) from exc
 
-        f.save()
+            f.save()
+        except MusicOrgError:
+            raise
+        except Exception as exc:
+            error = classify_exception(exc, path)
+            error.message = f"Failed to save tags for {path.name}"
+            error.suggestion = "The file may be locked or the tag format unsupported. Try again or check file permissions."
+            raise error

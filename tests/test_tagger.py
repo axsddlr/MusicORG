@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from musicorg.core.tagger import TagData, TagManager
+from musicorg.errors import MusicOrgError, ErrorCode
 
 
 class TestTagData:
@@ -62,6 +63,7 @@ class TestTagManager:
         p = tmp_path / "garbage.mp3"
         p.write_bytes(b"\x00" * 100)
         tm = TagManager()
+        # Corrupt files return empty TagData gracefully
         tags = tm.read(p)
         assert isinstance(tags, TagData)
 
@@ -70,16 +72,18 @@ class TestTagManager:
         p = tmp_path / "test.xyz"
         p.write_bytes(b"\x00" * 100)
         tm = TagManager()
+        # Unknown formats return empty TagData gracefully
         tags = tm.read(p)
         assert isinstance(tags, TagData)
 
-    def test_write_invalid_file_raises_value_error(self, tmp_path):
-        """Writing to a file that cannot be loaded raises ValueError."""
+    def test_write_invalid_file_raises_musicorg_error(self, tmp_path):
+        """Writing to a file that cannot be loaded raises MusicOrgError."""
         p = tmp_path / "test.xyz"
         p.write_bytes(b"\x00" * 100)
         tm = TagManager()
-        with pytest.raises(ValueError):
+        with pytest.raises(MusicOrgError) as exc_info:
             tm.write(p, TagData())
+        assert exc_info.value.code in (ErrorCode.TAG_UNSUPPORTED_FORMAT, ErrorCode.TAG_CORRUPT)
 
     def test_read_artwork_uses_raw_and_mime_attributes(self, monkeypatch):
         class _Artwork:
@@ -157,7 +161,7 @@ class TestTagManager:
         monkeypatch.setattr("musicorg.core.tagger.music_tag.Artwork", _Artwork)
 
         tm = TagManager()
-        with pytest.raises(ValueError, match="Failed to embed artwork"):
+        with pytest.raises(MusicOrgError, match="Failed to embed artwork"):
             tm.write(
                 "dummy.mp3",
                 TagData(artwork_data=b"\x01\x02", artwork_mime="image/png"),

@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from musicorg.core.tag_cache import TagCache
 from musicorg.core.tagger import TagData, TagManager
+from musicorg.errors import format_error_for_user
 from musicorg.ui.widgets.progress_bar import ProgressIndicator
 from musicorg.ui.widgets.tag_form import TagForm
 from musicorg.ui.utils import safe_disconnect_multiple
@@ -229,7 +230,7 @@ class TagEditorPanel(QDialog):
             QMessageBox.critical(
                 self,
                 "Save Error",
-                f"Failed to save tags for:\n{path}\n\nError: {exc}"
+                format_error_for_user(exc)
             )
 
     def _apply_bulk_tags(self) -> None:
