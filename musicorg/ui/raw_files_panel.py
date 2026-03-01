@@ -22,21 +22,13 @@ from PySide6.QtWidgets import (
 from musicorg.core.scanner import AudioFile
 from musicorg.ui.widgets.dir_picker import DirPicker
 from musicorg.ui.widgets.progress_bar import ProgressIndicator
-from musicorg.ui.utils import safe_disconnect_multiple
+from musicorg.ui.utils import format_file_size, safe_disconnect_multiple
 from musicorg.workers.scan_worker import ScanWorker
 
 PATH_ROLE = int(Qt.ItemDataRole.UserRole)
 ITEM_KIND_ROLE = PATH_ROLE + 1
 ITEM_KIND_FILE = "file"
 ITEM_KIND_FOLDER = "folder"
-
-
-def _fmt_size(size_bytes: int) -> str:
-    if size_bytes < 1024:
-        return f"{size_bytes} B"
-    if size_bytes < 1024 * 1024:
-        return f"{size_bytes / 1024:.1f} KB"
-    return f"{size_bytes / (1024 * 1024):.1f} MB"
 
 
 class RawFilesPanel(QWidget):
@@ -402,7 +394,7 @@ class RawFilesPanel(QWidget):
             file_item = QTreeWidgetItem(parent_item)
             file_item.setText(0, audio_file.path.name)
             file_item.setText(1, audio_file.extension.upper().lstrip("."))
-            file_item.setText(2, _fmt_size(audio_file.size))
+            file_item.setText(2, format_file_size(audio_file.size))
             file_item.setText(
                 3,
                 self._relative_folder(audio_file.path.parent, root_path),

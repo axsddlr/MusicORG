@@ -282,7 +282,7 @@ class AutoTagger:
 
         candidates: list[MatchCandidate] = []
         for release in data.get("release-list", [])[:5]:
-            release_id = str(release.get("id", "") or "")
+            release_id = release.get("id", "")
             full_release = release
             if self._is_uuid(release_id):
                 try:
@@ -295,7 +295,7 @@ class AutoTagger:
                     pass
 
             release_group = full_release.get("release-group") or release.get("release-group") or {}
-            release_group_id = str(release_group.get("id", "") or "")
+            release_group_id = release_group.get("id", "")
             track_rows = self._mb_album_tracks(full_release)
             artist_name = self._mb_artist_credit(full_release) or self._mb_artist_credit(release)
             title = str(full_release.get("title", "") or release.get("title", ""))
@@ -441,12 +441,12 @@ class AutoTagger:
         candidates: list[MatchCandidate] = []
         for recording in data.get("recording-list", [])[:10]:
             release = (recording.get("release-list") or [{}])[0]
-            release_id = str(release.get("id", "") or "")
+            release_id = release.get("id", "")
             release_group = release.get("release-group") or {}
-            release_group_id = str(release_group.get("id", "") or "")
+            release_group_id = release_group.get("id", "")
             item_artist = self._mb_artist_credit(recording) or artist
-            item_title = str(recording.get("title", "") or title)
-            item_album = str(release.get("title", "") or "")
+            item_title = recording.get("title", title)
+            item_album = release.get("title", "")
             item_year = self._mb_extract_year(release)
             score = float(recording.get("ext:score", 0) or 0.0)
             distance = 1.0 - max(0.0, min(score, 100.0)) / 100.0
@@ -601,16 +601,16 @@ class AutoTagger:
         if not tracks:
             return False
 
-        album_artist = str(match_payload.get("artist", "") or "")
-        album = str(match_payload.get("album", "") or "")
+        album_artist = match_payload.get("artist", "")
+        album = match_payload.get("album", "")
         year = self._coerce_int(match_payload.get("year", 0), 0)
-        genre = str(match_payload.get("genre", "") or "")
+        genre = match_payload.get("genre", "")
 
         for index, (_, _, _, path_obj) in enumerate(file_rows):
             track_row = tracks[index] if index < len(tracks) else tracks[-1]
             tag_data = TagData(
-                title=str(track_row.get("title", "") or ""),
-                artist=str(track_row.get("artist", "") or album_artist),
+                title=track_row.get("title", ""),
+                artist=track_row.get("artist", album_artist),
                 album=album,
                 albumartist=album_artist,
                 track=self._coerce_int(track_row.get("track"), index + 1),
@@ -631,11 +631,11 @@ class AutoTagger:
         artwork_data: bytes | None,
         artwork_mime: str,
     ) -> bool:
-        artist = str(match_payload.get("artist", "") or "")
-        album = str(match_payload.get("album", "") or "")
-        title = str(match_payload.get("title", "") or "")
+        artist = match_payload.get("artist", "")
+        album = match_payload.get("album", "")
+        title = match_payload.get("title", "")
         year = self._coerce_int(match_payload.get("year", 0), 0)
-        genre = str(match_payload.get("genre", "") or "")
+        genre = match_payload.get("genre", "")
         track = self._coerce_int(match_payload.get("track", 0), 0)
         disc = self._coerce_int(match_payload.get("disc", 0), 0)
         tag_data = TagData(

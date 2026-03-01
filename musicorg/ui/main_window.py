@@ -322,7 +322,6 @@ class MainWindow(QMainWindow):
             self._status_strip.show_message("No panel active to select tracks in", 2400)
 
     def _update_tools_availability(self, total: int, selected: int) -> None:
-        _ = total
         enabled = selected > 0
         if self._tag_editor_action is not None:
             self._tag_editor_action.setEnabled(enabled)

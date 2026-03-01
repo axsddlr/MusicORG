@@ -14,22 +14,13 @@ from PySide6.QtWidgets import (
 from musicorg.core.duplicate_finder import DuplicateGroup
 from musicorg.ui.widgets.dir_picker import DirPicker
 from musicorg.ui.widgets.progress_bar import ProgressIndicator
-from musicorg.ui.utils import safe_disconnect_multiple
+from musicorg.ui.utils import format_file_size, safe_disconnect_multiple
 from musicorg.workers.duplicate_worker import DuplicateDeleteWorker, DuplicateScanWorker
 
 COLOR_KEEP = QColor("#4CAF50")
 COLOR_DELETE = QColor("#F44336")
 COLOR_GROUP = QColor("#d4a44a")
 COLOR_MUTED = QColor("#7a8494")
-
-
-def _fmt_size(size_bytes: int) -> str:
-    if size_bytes < 1024:
-        return f"{size_bytes} B"
-    elif size_bytes < 1024 * 1024:
-        return f"{size_bytes / 1024:.1f} KB"
-    else:
-        return f"{size_bytes / (1024 * 1024):.1f} MB"
 
 
 class DuplicatesPanel(QWidget):
@@ -182,7 +173,7 @@ class DuplicatesPanel(QWidget):
         total_size = sum(f.size for g in groups for f in g.deletable_files)
         self._summary_label.setText(
             f"Found {len(groups)} groups, {total_files} files to delete, "
-            f"{_fmt_size(total_size)} reclaimable"
+            f"{format_file_size(total_size)} reclaimable"
         )
         self._progress.finish(f"Found {len(groups)} duplicate groups")
 
@@ -229,7 +220,7 @@ class DuplicatesPanel(QWidget):
                 child.setText(3, df.tags.album)
                 child.setText(4, df.extension.upper().lstrip("."))
                 child.setText(5, f"{df.bitrate // 1000} kbps" if df.bitrate else "")
-                child.setText(6, _fmt_size(df.size))
+                child.setText(6, format_file_size(df.size))
                 child.setText(7, str(df.path))
 
                 for col in range(self._tree.columnCount()):
