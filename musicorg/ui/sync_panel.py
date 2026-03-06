@@ -33,7 +33,7 @@ class SyncPanel(QWidget):
         self._plan_thread: QThread | None = None
         self._sync_worker: SyncExecuteWorker | None = None
         self._sync_thread: QThread | None = None
-
+        self._identity_db_path: str = ""
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -103,6 +103,9 @@ class SyncPanel(QWidget):
     def set_path_format(self, fmt: str) -> None:
         self._format_edit.setText(fmt)
 
+    def set_identity_db_path(self, path: str) -> None:
+        self._identity_db_path = path
+
     def _start_plan(self) -> None:
         if self._plan_thread and self._plan_thread.isRunning():
             QMessageBox.information(self, "Plan In Progress", "Sync planning is already running.")
@@ -128,7 +131,13 @@ class SyncPanel(QWidget):
         path_format = self._format_edit.text().strip() or "$albumartist/$album/$track $title"
 
         include_reverse = self._reverse_sync_check.isChecked()
-        self._plan_worker = SyncPlanWorker(source, dest, path_format, include_reverse)
+        self._plan_worker = SyncPlanWorker(
+            source,
+            dest,
+            path_format,
+            include_reverse,
+            identity_db_path=self._identity_db_path,
+        )
         self._plan_thread = QThread()
         self._plan_worker.moveToThread(self._plan_thread)
         self._plan_thread.started.connect(self._plan_worker.run)
@@ -298,3 +307,9 @@ class SyncPanel(QWidget):
             self._sync_thread.wait()
         self._cleanup_plan()
         self._cleanup_sync()
+
+
+
+
+
+

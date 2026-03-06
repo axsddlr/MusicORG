@@ -30,6 +30,7 @@ class DuplicatesPanel(QWidget):
         super().__init__(parent)
         self._groups: list[DuplicateGroup] = []
         self._cache_db_path: str = ""
+        self._identity_db_path: str = ""
         self._scan_worker: DuplicateScanWorker | None = None
         self._scan_thread: QThread | None = None
         self._delete_worker: DuplicateDeleteWorker | None = None
@@ -39,6 +40,9 @@ class DuplicatesPanel(QWidget):
 
     def set_cache_db_path(self, path: str) -> None:
         self._cache_db_path = path
+
+    def set_identity_db_path(self, path: str) -> None:
+        self._identity_db_path = path
 
     def set_source_dir(self, path: str) -> None:
         self._dir_picker.set_path(path)
@@ -72,9 +76,9 @@ class DuplicatesPanel(QWidget):
 
         # Results tree
         self._tree = QTreeWidget()
-        self._tree.setColumnCount(8)
+        self._tree.setColumnCount(10)
         self._tree.setHeaderLabels(
-            ["Action", "Title", "Artist", "Album", "Format", "Bitrate", "Size", "Path"]
+            ["Action", "Title", "Artist", "Album", "Format", "Bitrate", "Size", "Match", "Confidence", "Path"]
         )
         tree_header = self._tree.header()
         tree_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
@@ -84,7 +88,9 @@ class DuplicatesPanel(QWidget):
         tree_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         tree_header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         tree_header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
-        tree_header.setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
+        tree_header.setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)
+        tree_header.setSectionResizeMode(8, QHeaderView.ResizeMode.ResizeToContents)
+        tree_header.setSectionResizeMode(9, QHeaderView.ResizeMode.Stretch)
         self._tree.setAlternatingRowColors(True)
         self._tree.setRootIsDecorated(True)
         self._tree.itemChanged.connect(self._on_tree_item_changed)
@@ -143,6 +149,7 @@ class DuplicatesPanel(QWidget):
             source,
             match_artist=self._match_artist_check.isChecked(),
             match_mode=str(self._match_mode_combo.currentData() or "aggressive"),
+            identity_db_path=self._identity_db_path,
             cache_db_path=self._cache_db_path,
         )
         self._scan_thread = QThread()
@@ -195,6 +202,15 @@ class DuplicatesPanel(QWidget):
         self._cancel_btn.setEnabled(False)
         self._progress.finish("Scan cancelled")
 
+    @staticmethod
+    def _match_reason_label(reason: str) -> str:
+        labels = {
+            "exact_hash": "Exact Hash",
+            "tag_identity": "Tag Identity",
+            "filename_path": "Filename/Path",
+        }
+        return labels.get(reason, "Unknown")
+
     def _populate_tree(self) -> None:
         self._tree.blockSignals(True)
         self._tree.clear()
@@ -228,7 +244,9 @@ class DuplicatesPanel(QWidget):
                 child.setText(4, df.extension.upper().lstrip("."))
                 child.setText(5, f"{df.bitrate // 1000} kbps" if df.bitrate else "")
                 child.setText(6, format_file_size(df.size))
-                child.setText(7, str(df.path))
+                child.setText(7, self._match_reason_label(df.match_reason))
+                child.setText(8, f"{df.confidence:.0%}" if df.confidence > 0 else "")
+                child.setText(9, str(df.path))
 
                 for col in range(self._tree.columnCount()):
                     child.setForeground(col, color)
@@ -420,6 +438,17 @@ class DuplicatesPanel(QWidget):
             self._delete_thread.wait()
         self._cleanup_scan()
         self._cleanup_delete()
+
+
+
+
+
+
+
+
+
+
+
 
 
 

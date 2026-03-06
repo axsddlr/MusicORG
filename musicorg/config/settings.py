@@ -59,6 +59,10 @@ class AppSettings:
     def tag_cache_db_path(self) -> str:
         return str(self.app_data_dir / "tag_cache.db")
 
+    @property
+    def track_identity_db_path(self) -> str:
+        return str(self.app_data_dir / "track_identity.db")
+
     # -- backdrop opacity --
 
     @property

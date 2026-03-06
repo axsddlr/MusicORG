@@ -102,13 +102,16 @@ class MainWindow(QMainWindow):
         self._artwork_downloader_panel = ArtworkDownloaderPanel(self)
 
         cache_path = self._settings.tag_cache_db_path
+        identity_path = self._settings.track_identity_db_path
         self._source_panel.set_cache_db_path(cache_path)
         self._tag_editor_panel.set_cache_db_path(cache_path)
         self._autotag_panel.set_cache_db_path(cache_path)
         self._artwork_downloader_panel.set_cache_db_path(cache_path)
         self._autotag_panel.set_discogs_token(self._settings.discogs_token)
         self._artwork_downloader_panel.set_discogs_token(self._settings.discogs_token)
+        self._sync_panel.set_identity_db_path(identity_path)
         self._duplicates_panel.set_cache_db_path(cache_path)
+        self._duplicates_panel.set_identity_db_path(identity_path)
         self._raw_files_panel.set_cache_db_path(cache_path)
 
         self._stack.addWidget(self._source_panel)      # index 0
@@ -454,3 +457,4 @@ class MainWindow(QMainWindow):
         self._raw_files_panel.shutdown()
         self._settings.window_geometry = self.saveGeometry()
         super().closeEvent(event)
+

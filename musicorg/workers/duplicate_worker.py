@@ -8,6 +8,7 @@ from musicorg.core.duplicate_finder import DuplicateGroup, find_duplicates
 from musicorg.core.scanner import FileScanner
 from musicorg.core.tag_cache import TagCache
 from musicorg.core.tagger import TagData, TagManager
+from musicorg.core.track_identity_index import TrackIdentityIndex
 from musicorg.workers.base_worker import BaseWorker
 
 
@@ -19,17 +20,20 @@ class DuplicateScanWorker(BaseWorker):
         root_dir: str,
         match_artist: bool = False,
         match_mode: str = "aggressive",
+        identity_db_path: str = "",
         cache_db_path: str = "",
     ) -> None:
         super().__init__()
         self._root_dir = root_dir
         self._match_artist = match_artist
         self._match_mode = (match_mode or "aggressive").strip().lower()
+        self._identity_db_path = identity_db_path
         self._cache_db_path = cache_db_path
 
     def run(self) -> None:
         self.started.emit()
         cache: TagCache | None = None
+        identity_index: TrackIdentityIndex | None = None
         try:
             # Phase 1: Discover files
             self.progress.emit(0, 0, "Scanning for audio files...")
@@ -55,9 +59,17 @@ class DuplicateScanWorker(BaseWorker):
                 except Exception:
                     cache = None
 
+            if self._identity_db_path:
+                try:
+                    identity_index = TrackIdentityIndex(self._identity_db_path)
+                    identity_index.open()
+                except Exception:
+                    identity_index = None
+
             # Phase 2: Read tags
             tm = TagManager()
             file_tags: list[tuple[Path, TagData, int]] = []
+            track_uids: dict[Path, str] = {}
             cache_entries: list[tuple[Path, int, int, TagData]] = []
 
             for i, af in enumerate(audio_files):
@@ -78,11 +90,22 @@ class DuplicateScanWorker(BaseWorker):
                     try:
                         tag_data = tm.read(af.path)
                         if cache:
-                            cache_entries.append(
-                                (af.path, af.mtime_ns, af.size, tag_data)
-                            )
+                            cache_entries.append((af.path, af.mtime_ns, af.size, tag_data))
                     except Exception:
                         continue
+
+                if identity_index:
+                    try:
+                        record = identity_index.upsert(
+                            af.path,
+                            af.mtime_ns,
+                            af.size,
+                            tag_data,
+                            use_path_hints=(self._match_mode != "strict"),
+                        )
+                        track_uids[af.path] = record.track_uid
+                    except Exception:
+                        pass
 
                 file_tags.append((af.path, tag_data, af.size))
 
@@ -99,12 +122,18 @@ class DuplicateScanWorker(BaseWorker):
                 file_tags,
                 match_artist=self._match_artist,
                 mode=self._match_mode,
+                track_uids=track_uids,
             )
             self.finished.emit(groups)
 
         except Exception as e:
             self.error.emit(str(e))
         finally:
+            if identity_index:
+                try:
+                    identity_index.close()
+                except Exception:
+                    pass
             if cache:
                 try:
                     cache.close()

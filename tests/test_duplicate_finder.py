@@ -224,3 +224,56 @@ class TestFindDuplicates:
             (p2, _tag("Different", "Artist B", "Album B"), p2.stat().st_size),
         ]
         assert find_duplicates(files, match_artist=True, mode="strict") == []
+
+    def test_aggressive_hash_match_sets_exact_hash_confidence(self, tmp_path):
+        payload = b"same"
+        p1 = tmp_path / "x1.mp3"
+        p2 = tmp_path / "x2.mp3"
+        p1.write_bytes(payload)
+        p2.write_bytes(payload)
+        files = [
+            (p1, _tag("A", "Artist1", "Album1"), p1.stat().st_size),
+            (p2, _tag("B", "Artist2", "Album2"), p2.stat().st_size),
+        ]
+        groups = find_duplicates(files, match_artist=True, mode="aggressive")
+        assert len(groups) == 1
+        assert groups[0].match_reason == "exact_hash"
+        assert groups[0].confidence == 1.0
+
+    def test_aggressive_path_fallback_sets_filename_path_confidence(self):
+        files = [
+            (Path("Artist/Album/01 - My Song.mp3"), _tag("", "", ""), 1000),
+            (Path("Artist/Album/# - MY SONG.mp3"), _tag("", "", ""), 1100),
+        ]
+        groups = find_duplicates(files, mode="aggressive")
+        assert len(groups) == 1
+        assert groups[0].match_reason == "filename_path"
+        assert groups[0].confidence == 0.6
+
+    def test_strict_mode_reports_tag_identity_confidence(self):
+        files = [
+            (Path("a.mp3"), _tag("Song", "Artist", "Album"), 1000),
+            (Path("b.mp3"), _tag("Song", "Artist", "Album"), 1200),
+        ]
+        groups = find_duplicates(files, mode="strict", match_artist=True)
+        assert len(groups) == 1
+        assert groups[0].match_reason == "tag_identity"
+        assert groups[0].confidence == 0.9
+
+    def test_track_uids_sha1_group_in_strict_mode(self):
+        files = [
+            (Path("a.mp3"), _tag("Track One", "A", "X"), 1000),
+            (Path("b.mp3"), _tag("Track Two", "B", "Y"), 1000),
+        ]
+        groups = find_duplicates(
+            files,
+            mode="strict",
+            match_artist=True,
+            track_uids={
+                Path("a.mp3"): "sha1:abc",
+                Path("b.mp3"): "sha1:abc",
+            },
+        )
+        assert len(groups) == 1
+        assert groups[0].match_reason == "exact_hash"
+        assert groups[0].confidence == 1.0

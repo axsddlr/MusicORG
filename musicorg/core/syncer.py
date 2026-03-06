@@ -291,9 +291,14 @@ def _has_exact_content_match(
 class SyncManager:
     """Plans and executes non-destructive file copy operations."""
 
-    def __init__(self, path_format: str = "$albumartist/$album/$track $title") -> None:
+    def __init__(
+        self,
+        path_format: str = "$albumartist/$album/$track $title",
+        identity_db_path: str | Path | None = None,
+    ) -> None:
         self._path_format = path_format
         self._tag_manager = TagManager()
+        self._identity_db_path = Path(identity_db_path) if identity_db_path else None
         self._cancelled = False
 
     def cancel(self) -> None:
@@ -450,4 +455,12 @@ class SyncManager:
                 item.error = str(e)
 
         return plan
+
+
+
+
+
+
+
+
 

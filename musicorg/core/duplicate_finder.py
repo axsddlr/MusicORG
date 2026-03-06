@@ -1,4 +1,4 @@
-"""Find duplicate audio files by tag metadata and exact content."""
+"""Find duplicate audio files by metadata and exact content with confidence signals."""
 
 from __future__ import annotations
 
@@ -12,10 +12,18 @@ if TYPE_CHECKING:
     from musicorg.core.tagger import TagData
 
 DuplicateMatchMode = Literal["strict", "aggressive"]
+MatchReason = Literal["exact_hash", "tag_identity", "filename_path", "unknown"]
 
 FORMAT_PRIORITY: dict[str, int] = {
     ".flac": 2,
     ".mp3": 1,
+}
+
+_REASON_CONFIDENCE: dict[MatchReason, float] = {
+    "exact_hash": 1.0,
+    "tag_identity": 0.9,
+    "filename_path": 0.6,
+    "unknown": 0.0,
 }
 
 _LEADING_TRACK_PREFIX_RE = re.compile(
@@ -56,29 +64,46 @@ def _normalized_filename_title(path: Path) -> str:
     return _normalize_identity_component(stem)
 
 
-def _metadata_group_key(path: Path, tags: TagData, *, match_artist: bool) -> str:
-    title = _normalize_identity_component(tags.title) or _normalized_filename_title(path)
+def _metadata_group_data(
+    path: Path,
+    tags: TagData,
+    *,
+    match_artist: bool,
+    mode: DuplicateMatchMode,
+) -> tuple[str, MatchReason]:
+    if mode == "strict":
+        title = normalize_title(tags.title)
+        if not title:
+            return "", "unknown"
+        album = normalize_title(tags.album)
+        if match_artist:
+            artist = normalize_title(tags.artist)
+            return f"{title} || {album} || {artist}", "tag_identity"
+        return f"{title} || {album}", "tag_identity"
+
+    title_tag = _normalize_identity_component(tags.title)
+    title_path = _normalized_filename_title(path)
+    title = title_tag or title_path
     if not title:
-        return ""
+        return "", "unknown"
 
     path_artist, path_album = _path_hints(path)
-    album = _normalize_identity_component(tags.album) or _normalize_identity_component(path_album)
-    if match_artist:
-        artist = _normalize_identity_component(tags.artist) or _normalize_identity_component(path_artist)
-        return f"{title} || {album} || {artist}"
-    return f"{title} || {album}"
+    album_tag = _normalize_identity_component(tags.album)
+    album_path = _normalize_identity_component(path_album)
+    album = album_tag or album_path
 
-
-def _strict_metadata_group_key(tags: TagData, *, match_artist: bool) -> str:
-    """Legacy tag-only duplicate key."""
-    title = normalize_title(tags.title)
-    if not title:
-        return ""
-    album = normalize_title(tags.album)
     if match_artist:
-        artist = normalize_title(tags.artist)
-        return f"{title} || {album} || {artist}"
-    return f"{title} || {album}"
+        artist_tag = _normalize_identity_component(tags.artist)
+        artist_path = _normalize_identity_component(path_artist)
+        artist = artist_tag or artist_path
+        key = f"{title} || {album} || {artist}"
+        has_strict_tag_identity = bool(title_tag and album_tag and artist_tag)
+    else:
+        key = f"{title} || {album}"
+        has_strict_tag_identity = bool(title_tag and album_tag)
+
+    reason: MatchReason = "tag_identity" if has_strict_tag_identity else "filename_path"
+    return key, reason
 
 
 def _normalize_match_mode(mode: str) -> DuplicateMatchMode:
@@ -128,6 +153,16 @@ def _union(parent: list[int], rank: list[int], a: int, b: int) -> None:
         rank[ra] += 1
 
 
+def _reason_confidence(reason: MatchReason) -> float:
+    return _REASON_CONFIDENCE.get(reason, 0.0)
+
+
+def _prefer_reason(current: MatchReason, candidate: MatchReason) -> MatchReason:
+    if _reason_confidence(candidate) > _reason_confidence(current):
+        return candidate
+    return current
+
+
 @dataclass
 class DuplicateFile:
     """One file within a duplicate group."""
@@ -138,6 +173,8 @@ class DuplicateFile:
     size: int
     bitrate: int = 0
     keep: bool = False
+    match_reason: MatchReason = "unknown"
+    confidence: float = 0.0
 
 
 @dataclass
@@ -146,6 +183,8 @@ class DuplicateGroup:
 
     normalized_key: str
     files: list[DuplicateFile] = field(default_factory=list)
+    match_reason: MatchReason = "unknown"
+    confidence: float = 0.0
 
     @property
     def kept_file(self) -> DuplicateFile | None:
@@ -164,6 +203,7 @@ def find_duplicates(
     *,
     match_artist: bool = False,
     mode: str = "aggressive",
+    track_uids: dict[Path, str] | None = None,
 ) -> list[DuplicateGroup]:
     """Find duplicate audio files by metadata identity and exact content hash.
 
@@ -171,6 +211,7 @@ def find_duplicates(
         file_tags: List of (path, TagData, file_size) tuples.
         match_artist: If True, group by (title + album + artist) identity.
         mode: Matching mode: "strict" (tags only) or "aggressive" (tags + path + hash).
+        track_uids: Optional stable IDs from persistent identity index.
 
     Returns:
         List of DuplicateGroup, each containing 2+ files considered duplicates.
@@ -180,6 +221,8 @@ def find_duplicates(
     files: list[DuplicateFile] = []
     metadata_keys: list[str] = []
     metadata_groups: dict[str, list[int]] = {}
+    metadata_reason_by_key: dict[str, MatchReason] = {}
+    uid_groups: dict[str, list[int]] = {}
     size_groups: dict[int, list[int]] = {}
 
     for path, tags, size in file_tags:
@@ -189,39 +232,69 @@ def find_duplicates(
         idx = len(files)
         files.append(df)
 
-        if normalized_mode == "strict":
-            key = _strict_metadata_group_key(tags, match_artist=match_artist)
-        else:
-            key = _metadata_group_key(path, tags, match_artist=match_artist)
-
+        key, reason = _metadata_group_data(
+            path,
+            tags,
+            match_artist=match_artist,
+            mode=normalized_mode,
+        )
         metadata_keys.append(key)
         if key:
             metadata_groups.setdefault(key, []).append(idx)
+            metadata_reason_by_key[key] = _prefer_reason(
+                metadata_reason_by_key.get(key, "unknown"),
+                reason,
+            )
+
         if normalized_mode == "aggressive":
             size_groups.setdefault(size, []).append(idx)
+
+        uid = (track_uids or {}).get(path, "")
+        if uid:
+            uid_groups.setdefault(uid, []).append(idx)
 
     if len(files) < 2:
         return []
 
     parent = list(range(len(files)))
     rank = [0] * len(files)
+    signal_by_index: dict[int, MatchReason] = {idx: "unknown" for idx in range(len(files))}
 
-    for indices in metadata_groups.values():
+    def apply_signal(indices: list[int], reason: MatchReason) -> None:
+        for idx in indices:
+            signal_by_index[idx] = _prefer_reason(signal_by_index[idx], reason)
+
+    for key, indices in metadata_groups.items():
         if len(indices) < 2:
             continue
         leader = indices[0]
         for idx in indices[1:]:
             _union(parent, rank, leader, idx)
+        apply_signal(indices, metadata_reason_by_key.get(key, "unknown"))
+
+    index_hash: dict[int, str] = {}
+    for uid, indices in uid_groups.items():
+        if len(indices) < 2:
+            continue
+        leader = indices[0]
+        for idx in indices[1:]:
+            _union(parent, rank, leader, idx)
+        if uid.startswith("sha1:"):
+            digest = uid[5:]
+            for idx in indices:
+                index_hash[idx] = digest
+            apply_signal(indices, "exact_hash")
+        else:
+            apply_signal(indices, "tag_identity")
 
     hash_cache: dict[Path, str] = {}
-    index_hash: dict[int, str] = {}
     if normalized_mode == "aggressive":
         for indices in size_groups.values():
             if len(indices) < 2:
                 continue
             hash_groups: dict[str, list[int]] = {}
             for idx in indices:
-                digest = _file_sha1(files[idx].path, hash_cache)
+                digest = index_hash.get(idx) or _file_sha1(files[idx].path, hash_cache)
                 if not digest:
                     continue
                 index_hash[idx] = digest
@@ -232,6 +305,7 @@ def find_duplicates(
                 leader = same_hash_indices[0]
                 for idx in same_hash_indices[1:]:
                     _union(parent, rank, leader, idx)
+                apply_signal(same_hash_indices, "exact_hash")
 
     components: dict[int, list[int]] = {}
     for idx in range(len(files)):
@@ -252,6 +326,15 @@ def find_duplicates(
         for f in component_files[1:]:
             f.keep = False
 
+        component_reason: MatchReason = "unknown"
+        for idx in members:
+            component_reason = _prefer_reason(component_reason, signal_by_index.get(idx, "unknown"))
+        component_confidence = _reason_confidence(component_reason)
+
+        for f in component_files:
+            f.match_reason = component_reason
+            f.confidence = component_confidence
+
         component_keys = sorted({metadata_keys[idx] for idx in members if metadata_keys[idx]})
         if component_keys:
             group_key = component_keys[0]
@@ -262,7 +345,14 @@ def find_duplicates(
             else:
                 group_key = "unknown"
 
-        result.append(DuplicateGroup(normalized_key=group_key, files=component_files))
+        result.append(
+            DuplicateGroup(
+                normalized_key=group_key,
+                files=component_files,
+                match_reason=component_reason,
+                confidence=component_confidence,
+            )
+        )
 
     result.sort(key=lambda g: g.normalized_key)
     return result
