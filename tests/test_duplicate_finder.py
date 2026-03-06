@@ -167,3 +167,60 @@ class TestFindDuplicates:
         ]
         groups = find_duplicates(files)
         assert len(groups) == 2
+
+    def test_missing_title_falls_back_to_filename_and_path_hints(self):
+        files = [
+            (Path("Artist/Album/01 - My Song.mp3"), _tag("", "", ""), 1000),
+            (Path("Artist/Album/# - MY SONG.mp3"), _tag("", "", ""), 1100),
+        ]
+        groups = find_duplicates(files)
+        assert len(groups) == 1
+        assert len(groups[0].files) == 2
+
+    def test_exact_content_hash_fallback_groups_when_metadata_differs(self, tmp_path):
+        payload = b"duplicate-bytes"
+        p1 = tmp_path / "A" / "one.mp3"
+        p2 = tmp_path / "B" / "two.mp3"
+        p1.parent.mkdir(parents=True)
+        p2.parent.mkdir(parents=True)
+        p1.write_bytes(payload)
+        p2.write_bytes(payload)
+
+        files = [
+            (p1, _tag("Track One", "Artist A", "Album A"), p1.stat().st_size),
+            (p2, _tag("Completely Different", "Artist B", "Album B"), p2.stat().st_size),
+        ]
+        groups = find_duplicates(files, match_artist=True)
+        assert len(groups) == 1
+        assert len(groups[0].files) == 2
+
+    def test_match_artist_uses_path_hint_when_tags_missing(self):
+        files = [
+            (Path("Artist A/Album/Same Song.mp3"), _tag("", "", ""), 1000),
+            (Path("Artist B/Album/Same Song.mp3"), _tag("", "", ""), 1000),
+        ]
+        assert find_duplicates(files, match_artist=True) == []
+
+
+
+    def test_strict_mode_skips_missing_title_even_if_filename_matches(self):
+        files = [
+            (Path("Artist/Album/01 - My Song.mp3"), _tag("", "", ""), 1000),
+            (Path("Artist/Album/# - MY SONG.mp3"), _tag("", "", ""), 1000),
+        ]
+        assert find_duplicates(files, mode="strict") == []
+
+    def test_strict_mode_does_not_group_by_hash_only(self, tmp_path):
+        payload = b"strict-mode-bytes"
+        p1 = tmp_path / "A" / "one.mp3"
+        p2 = tmp_path / "B" / "two.mp3"
+        p1.parent.mkdir(parents=True)
+        p2.parent.mkdir(parents=True)
+        p1.write_bytes(payload)
+        p2.write_bytes(payload)
+
+        files = [
+            (p1, _tag("Track One", "Artist A", "Album A"), p1.stat().st_size),
+            (p2, _tag("Different", "Artist B", "Album B"), p2.stat().st_size),
+        ]
+        assert find_duplicates(files, match_artist=True, mode="strict") == []

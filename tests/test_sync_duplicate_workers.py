@@ -173,3 +173,13 @@ class TestDuplicateDeleteWorker:
         assert hasattr(worker, 'progress')
         assert hasattr(worker, 'finished')
         assert hasattr(worker, 'error')
+
+
+def test_duplicate_scan_worker_match_mode_defaults_to_aggressive():
+    worker = DuplicateScanWorker(root_dir=".")
+    assert worker._match_mode == "aggressive"
+
+
+def test_duplicate_scan_worker_accepts_strict_mode():
+    worker = DuplicateScanWorker(root_dir=".", match_mode="strict")
+    assert worker._match_mode == "strict"

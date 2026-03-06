@@ -18,11 +18,13 @@ class DuplicateScanWorker(BaseWorker):
         self,
         root_dir: str,
         match_artist: bool = False,
+        match_mode: str = "aggressive",
         cache_db_path: str = "",
     ) -> None:
         super().__init__()
         self._root_dir = root_dir
         self._match_artist = match_artist
+        self._match_mode = (match_mode or "aggressive").strip().lower()
         self._cache_db_path = cache_db_path
 
     def run(self) -> None:
@@ -93,7 +95,11 @@ class DuplicateScanWorker(BaseWorker):
 
             # Phase 3: Find duplicates
             self.progress.emit(total, total, "Analyzing duplicates...")
-            groups = find_duplicates(file_tags, match_artist=self._match_artist)
+            groups = find_duplicates(
+                file_tags,
+                match_artist=self._match_artist,
+                mode=self._match_mode,
+            )
             self.finished.emit(groups)
 
         except Exception as e:

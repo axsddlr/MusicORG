@@ -7,7 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QCheckBox, QHBoxLayout, QHeaderView, QLabel, QMessageBox,
+    QCheckBox, QComboBox, QHBoxLayout, QHeaderView, QLabel, QMessageBox,
     QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -53,6 +53,12 @@ class DuplicatesPanel(QWidget):
 
         self._match_artist_check = QCheckBox("Also match artist")
         header.addWidget(self._match_artist_check)
+
+        self._match_mode_combo = QComboBox()
+        self._match_mode_combo.addItem("Aggressive (tags + filename/path + hash)", "aggressive")
+        self._match_mode_combo.addItem("Strict (tags only)", "strict")
+        self._match_mode_combo.setCurrentIndex(0)
+        header.addWidget(self._match_mode_combo)
 
         self._scan_btn = QPushButton("Find Duplicates")
         self._scan_btn.setProperty("role", "accent")
@@ -136,6 +142,7 @@ class DuplicatesPanel(QWidget):
         self._scan_worker = DuplicateScanWorker(
             source,
             match_artist=self._match_artist_check.isChecked(),
+            match_mode=str(self._match_mode_combo.currentData() or "aggressive"),
             cache_db_path=self._cache_db_path,
         )
         self._scan_thread = QThread()
@@ -413,3 +420,7 @@ class DuplicatesPanel(QWidget):
             self._delete_thread.wait()
         self._cleanup_scan()
         self._cleanup_delete()
+
+
+
+

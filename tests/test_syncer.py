@@ -484,3 +484,66 @@ class TestSyncManager:
         plan = mgr.plan_sync(source, dest)
         assert plan.total == 1
         assert plan.items[0].status == "exists"
+
+    def test_identity_candidates_fallback_uses_destination_path_when_dest_tags_missing(self, tmp_path):
+        source = tmp_path / "source"
+        dest = tmp_path / "dest"
+        source.mkdir()
+        dest.mkdir()
+
+        src_song = source / "family_matters.mp3"
+        src_song.write_bytes(b"src-a")
+        actual_dest = dest / "J Cole" / "The Off Season" / "# - FAMILY MATTERS!!.mp3"
+        actual_dest.parent.mkdir(parents=True)
+        actual_dest.write_bytes(b"dst-a")
+
+        mgr = SyncManager(path_format="$artist/$album/$track $title")
+
+        def fake_read(path: Path) -> TagData:
+            if path == src_song:
+                return TagData(
+                    title="Family Matters",
+                    artist="J. Cole",
+                    album="The Off-Season",
+                    track=3,
+                )
+            # Destination has unreadable/missing tags.
+            return TagData()
+
+        mgr._tag_manager.read = fake_read  # type: ignore[method-assign]
+
+        plan = mgr.plan_sync(source, dest)
+        assert plan.total == 1
+        assert plan.items[0].status == "exists"
+
+    def test_content_hash_fallback_marks_exists_when_identities_do_not_match(self, tmp_path):
+        source = tmp_path / "source"
+        dest = tmp_path / "dest"
+        source.mkdir()
+        dest.mkdir()
+
+        payload = b"same-bytes-no-metadata-match"
+        src_song = source / "song_a.mp3"
+        src_song.write_bytes(payload)
+        actual_dest = dest / "Random Folder" / "Unrelated" / "x1.mp3"
+        actual_dest.parent.mkdir(parents=True)
+        actual_dest.write_bytes(payload)
+
+        mgr = SyncManager(path_format="$artist/$album/$track $title")
+
+        def fake_read(path: Path) -> TagData:
+            if path == src_song:
+                return TagData(
+                    title="Track A",
+                    artist="Artist A",
+                    album="Album A",
+                    track=1,
+                )
+            # Destination file has no useful tags and unrelated path identity.
+            return TagData()
+
+        mgr._tag_manager.read = fake_read  # type: ignore[method-assign]
+
+        plan = mgr.plan_sync(source, dest)
+        assert plan.total == 1
+        assert plan.items[0].status == "exists"
