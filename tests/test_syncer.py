@@ -10,6 +10,7 @@ from musicorg.core.syncer import (
     _identity_tuple,
 )
 from musicorg.core.tagger import TagData
+from musicorg.core.track_identity_index import TrackIdentityIndex
 
 
 class TestSanitizeFilename:
@@ -547,3 +548,75 @@ class TestSyncManager:
         plan = mgr.plan_sync(source, dest)
         assert plan.total == 1
         assert plan.items[0].status == "exists"
+
+
+def test_plan_sync_uses_identity_db_when_dest_tags_become_unreadable(tmp_path):
+    source = tmp_path / "source"
+    dest = tmp_path / "dest"
+    source.mkdir()
+    dest.mkdir()
+
+    src_song = source / "source_only_name.mp3"
+    dst_song = dest / "x123.mp3"
+    src_song.write_bytes(b"src-a")
+    dst_song.write_bytes(b"dst-b")
+
+    identity_db = tmp_path / "identity.db"
+
+    mgr_seed = SyncManager(path_format="$artist/$album/$track $title", identity_db_path=identity_db)
+
+    def fake_read_seed(path: Path) -> TagData:
+        if path in {src_song, dst_song}:
+            return TagData(title="Shared Song", artist="Shared Artist", album="Shared Album", track=1)
+        return TagData()
+
+    mgr_seed._tag_manager.read = fake_read_seed  # type: ignore[method-assign]
+    seeded_plan = mgr_seed.plan_sync(source, dest)
+    assert seeded_plan.total == 1
+    assert seeded_plan.items[0].status == "exists"
+
+    mgr = SyncManager(path_format="$artist/$album/$track $title", identity_db_path=identity_db)
+
+    def fake_read_after(path: Path) -> TagData:
+        if path == src_song:
+            return TagData(title="Shared Song", artist="Shared Artist", album="Shared Album", track=1)
+        # Destination tag read degrades to empty data.
+        return TagData()
+
+    mgr._tag_manager.read = fake_read_after  # type: ignore[method-assign]
+    plan = mgr.plan_sync(source, dest)
+    assert plan.total == 1
+    assert plan.items[0].status == "exists"
+
+
+def test_execute_sync_updates_identity_index_for_copied_file(tmp_path):
+    source = tmp_path / "source"
+    dest = tmp_path / "dest"
+    source.mkdir()
+    dest.mkdir()
+
+    src_song = source / "song.mp3"
+    src_song.write_bytes(b"copy-me")
+    dst_song = dest / "Artist" / "Album" / "01 Song.mp3"
+
+    plan = SyncPlan(items=[SyncItem(source=src_song, dest=dst_song, status="pending")])
+    identity_db = tmp_path / "identity.db"
+
+    mgr = SyncManager(identity_db_path=identity_db)
+
+    def fake_read(_path: Path) -> TagData:
+        return TagData(title="Song", artist="Artist", album="Album", track=1)
+
+    mgr._tag_manager.read = fake_read  # type: ignore[method-assign]
+    result = mgr.execute_sync(plan)
+
+    assert result.items[0].status == "copied"
+    stat = dst_song.stat()
+
+    idx = TrackIdentityIndex(identity_db)
+    idx.open()
+    record = idx.get(dst_song, stat.st_mtime_ns, stat.st_size)
+    idx.close()
+
+    assert record is not None
+    assert record.track_uid

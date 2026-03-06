@@ -53,3 +53,55 @@ def test_track_identity_index_preserves_sha1_for_same_fingerprint(tmp_path):
 
     assert rec.content_sha1 == "deadbeef"
     assert rec.track_uid == "sha1:deadbeef"
+
+
+def test_track_identity_index_keeps_richer_identity_for_same_fingerprint(tmp_path):
+    db_path = tmp_path / "identity.db"
+    file_path = tmp_path / "Artist" / "Album" / "track.mp3"
+    file_path.parent.mkdir(parents=True)
+
+    idx = TrackIdentityIndex(db_path)
+    idx.open()
+    first = idx.upsert(
+        file_path,
+        mtime_ns=99,
+        size=1234,
+        tags=TagData(title="Song", artist="Artist", album="Album", track=1),
+    )
+    second = idx.upsert(
+        file_path,
+        mtime_ns=99,
+        size=1234,
+        tags=TagData(),
+    )
+    idx.close()
+
+    assert second.strict_identity_key == first.strict_identity_key
+    assert second.loose_identity_key == first.loose_identity_key
+    assert second.title_key == first.title_key
+
+
+def test_track_identity_index_promotes_sha1_without_dropping_identity(tmp_path):
+    db_path = tmp_path / "identity.db"
+    file_path = tmp_path / "Artist" / "Album" / "track.mp3"
+    file_path.parent.mkdir(parents=True)
+
+    idx = TrackIdentityIndex(db_path)
+    idx.open()
+    first = idx.upsert(
+        file_path,
+        mtime_ns=77,
+        size=456,
+        tags=TagData(title="Song", artist="Artist", album="Album", track=1),
+    )
+    second = idx.upsert(
+        file_path,
+        mtime_ns=77,
+        size=456,
+        tags=TagData(),
+        content_sha1="beefcafe",
+    )
+    idx.close()
+
+    assert second.track_uid == "sha1:beefcafe"
+    assert second.strict_identity_key == first.strict_identity_key

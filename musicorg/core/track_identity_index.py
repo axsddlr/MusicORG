@@ -82,6 +82,39 @@ def _coerce_float(value: Any) -> float:
         return 0.0
 
 
+def _identity_quality(strict_key: str, loose_key: str, title_key: str) -> int:
+    """Score how informative an identity record is (higher is better)."""
+    score = 0
+
+    loose_parts = (loose_key or "").split("||")
+    if len(loose_parts) == 3:
+        if loose_parts[0]:
+            score += 2
+        if loose_parts[1]:
+            score += 2
+        if loose_parts[2]:
+            score += 4
+    elif title_key:
+        score += 2
+
+    strict_parts = (strict_key or "").split("||")
+    if len(strict_parts) >= 6:
+        if strict_parts[0]:
+            score += 1
+        if strict_parts[1]:
+            score += 1
+        if strict_parts[2]:
+            score += 2
+        if strict_parts[3] not in {"", "0"}:
+            score += 1
+        if strict_parts[4] not in {"", "0"}:
+            score += 1
+        if strict_parts[5] not in {"", "0"}:
+            score += 1
+
+    return score
+
+
 def build_identity_fields(
     path: Path,
     tags: Any,
@@ -217,26 +250,51 @@ class TrackIdentityIndex:
         normalized_path = self._normalize_path(path)
         with self._lock:
             conn = self._conn_or_raise()
-            existing_sha1 = ""
-            if not content_sha1:
-                row = conn.execute(
-                    """
-                    SELECT content_sha1
-                    FROM track_identity
-                    WHERE path = ? AND mtime_ns = ? AND size = ?
-                    """,
-                    (normalized_path, int(mtime_ns), int(size)),
-                ).fetchone()
-                if row is not None:
-                    existing_sha1 = str(row[0] or "")
+            existing_row = conn.execute(
+                """
+                SELECT
+                    mtime_ns, size, track_uid,
+                    strict_identity_key, loose_identity_key, title_key,
+                    content_sha1, duration
+                FROM track_identity
+                WHERE path = ?
+                """,
+                (normalized_path,),
+            ).fetchone()
+            same_fingerprint = bool(
+                existing_row is not None
+                and int(existing_row[0] or 0) == int(mtime_ns)
+                and int(existing_row[1] or 0) == int(size)
+            )
+            existing_track_uid = str(existing_row[2] or "") if existing_row is not None else ""
+            existing_strict_key = str(existing_row[3] or "") if existing_row is not None else ""
+            existing_loose_key = str(existing_row[4] or "") if existing_row is not None else ""
+            existing_title_key = str(existing_row[5] or "") if existing_row is not None else ""
+            existing_sha1 = str(existing_row[6] or "") if existing_row is not None else ""
+            existing_duration = float(existing_row[7] or 0.0) if existing_row is not None else 0.0
 
-            sha1_value = (content_sha1 or existing_sha1).strip().lower()
+            sha1_value = content_sha1.strip().lower()
+            if not sha1_value and same_fingerprint:
+                sha1_value = existing_sha1.strip().lower()
+
             track_uid, strict_key, loose_key, title_key, duration = build_identity_fields(
                 Path(normalized_path),
                 tags,
                 content_sha1=sha1_value,
                 use_path_hints=use_path_hints,
             )
+
+            incoming_quality = _identity_quality(strict_key, loose_key, title_key)
+            existing_quality = _identity_quality(existing_strict_key, existing_loose_key, existing_title_key)
+            if same_fingerprint and incoming_quality < existing_quality:
+                strict_key = existing_strict_key
+                loose_key = existing_loose_key
+                title_key = existing_title_key
+                duration = existing_duration
+                if sha1_value:
+                    track_uid = f"sha1:{sha1_value}"
+                else:
+                    track_uid = existing_track_uid
 
             conn.execute(
                 """
