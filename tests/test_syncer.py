@@ -5,9 +5,17 @@ from pathlib import Path
 import pytest
 
 from musicorg.core.syncer import (
-    SyncItem, SyncManager, SyncPlan,
-    _build_dest_path, _normalize_filename_for_match, _sanitize_filename,
+    SYNC_MATCH_EXACT_HASH,
+    SYNC_MATCH_IDENTITY,
+    SYNC_MATCH_PATH,
+    SYNC_MATCH_TRACK_UID,
+    SyncItem,
+    SyncManager,
+    SyncPlan,
+    _build_dest_path,
     _identity_tuple,
+    _normalize_filename_for_match,
+    _sanitize_filename,
 )
 from musicorg.core.tagger import TagData
 from musicorg.core.track_identity_index import TrackIdentityIndex
@@ -620,3 +628,135 @@ def test_execute_sync_updates_identity_index_for_copied_file(tmp_path):
 
     assert record is not None
     assert record.track_uid
+
+
+
+def test_plan_sync_sets_path_match_reason_for_filename_equivalence(tmp_path):
+    source = tmp_path / "source"
+    dest = tmp_path / "dest"
+    source.mkdir()
+    dest.mkdir()
+
+    src_song = source / "song1.mp3"
+    src_song.write_bytes(b"src")
+    existing_dest = dest / "Artist" / "Album" / "15 - SCRAMBLED EGGS - TBC (.mp3"
+    existing_dest.parent.mkdir(parents=True)
+    existing_dest.write_bytes(b"dst")
+
+    mgr = SyncManager(path_format="$albumartist/$album/$title")
+
+    def fake_read(_path: Path) -> TagData:
+        return TagData(
+            title="1-15 - SCRAMBLED EGGS - TBC (",
+            artist="Artist",
+            album="Album",
+        )
+
+    mgr._tag_manager.read = fake_read  # type: ignore[method-assign]
+    plan = mgr.plan_sync(source, dest)
+    assert plan.items[0].status == "exists"
+    assert plan.items[0].match_reason == SYNC_MATCH_PATH
+
+
+def test_plan_sync_sets_identity_match_reason(tmp_path):
+    source = tmp_path / "source"
+    dest = tmp_path / "dest"
+    source.mkdir()
+    dest.mkdir()
+
+    src_song = source / "source_song.mp3"
+    src_song.write_bytes(b"src")
+    actual_dest = dest / "Elsewhere" / "Different Folder" / "weird_name.mp3"
+    actual_dest.parent.mkdir(parents=True)
+    actual_dest.write_bytes(b"dst")
+
+    mgr = SyncManager(path_format="$albumartist/$album/$track $title")
+
+    def fake_read(_path: Path) -> TagData:
+        return TagData(title="Some Song", artist="Artist", album="Album", track=1)
+
+    mgr._tag_manager.read = fake_read  # type: ignore[method-assign]
+    plan = mgr.plan_sync(source, dest)
+    assert plan.items[0].status == "exists"
+    assert plan.items[0].match_reason == SYNC_MATCH_IDENTITY
+
+
+def test_plan_sync_sets_exact_hash_match_reason(tmp_path):
+    source = tmp_path / "source"
+    dest = tmp_path / "dest"
+    source.mkdir()
+    dest.mkdir()
+
+    payload = b"same-bytes"
+    src_song = source / "song_a.mp3"
+    src_song.write_bytes(payload)
+    actual_dest = dest / "Random Folder" / "Unrelated" / "x1.mp3"
+    actual_dest.parent.mkdir(parents=True)
+    actual_dest.write_bytes(payload)
+
+    mgr = SyncManager(path_format="$artist/$album/$track $title")
+
+    def fake_read(path: Path) -> TagData:
+        if path == src_song:
+            return TagData(title="Track A", artist="Artist A", album="Album A", track=1)
+        return TagData(title="Track B", artist="Artist B", album="Album B", track=7)
+
+    mgr._tag_manager.read = fake_read  # type: ignore[method-assign]
+    plan = mgr.plan_sync(source, dest)
+    assert plan.items[0].status == "exists"
+    assert plan.items[0].match_reason == SYNC_MATCH_EXACT_HASH
+
+
+def test_plan_sync_sets_track_uid_match_reason_with_identity_db(tmp_path):
+    source = tmp_path / "source"
+    dest = tmp_path / "dest"
+    source.mkdir()
+    dest.mkdir()
+
+    src_song = source / "source_only_name.mp3"
+    dst_song = dest / "x123.mp3"
+    src_song.write_bytes(b"src-a")
+    dst_song.write_bytes(b"dst-b")
+
+    identity_db = tmp_path / "identity.db"
+
+    seed_mgr = SyncManager(path_format="$artist/$album/$track $title", identity_db_path=identity_db)
+
+    def fake_read_seed(path: Path) -> TagData:
+        if path in {src_song, dst_song}:
+            return TagData(title="Shared Song", artist="Shared Artist", album="Shared Album", track=1)
+        return TagData()
+
+    seed_mgr._tag_manager.read = fake_read_seed  # type: ignore[method-assign]
+    seed_mgr.plan_sync(source, dest)
+
+    mgr = SyncManager(path_format="$artist/$album/$track $title", identity_db_path=identity_db)
+
+    def fake_read_after(path: Path) -> TagData:
+        if path == src_song:
+            return TagData(title="Shared Song", artist="Shared Artist", album="Shared Album", track=1)
+        return TagData()
+
+    mgr._tag_manager.read = fake_read_after  # type: ignore[method-assign]
+    plan = mgr.plan_sync(source, dest)
+    assert plan.items[0].status == "exists"
+    assert plan.items[0].match_reason == SYNC_MATCH_TRACK_UID
+
+
+def test_execute_sync_sets_path_match_reason_when_destination_exists(tmp_path):
+    source = tmp_path / "source"
+    dest = tmp_path / "dest"
+    source.mkdir()
+    dest.mkdir()
+
+    src_song = source / "song.mp3"
+    src_song.write_bytes(b"copy-me")
+    dst_song = dest / "song.mp3"
+    dst_song.write_bytes(b"already-there")
+
+    plan = SyncPlan(items=[SyncItem(source=src_song, dest=dst_song, status="pending")])
+    mgr = SyncManager()
+    result = mgr.execute_sync(plan)
+
+    assert result.items[0].status == "exists"
+    assert result.items[0].match_reason == SYNC_MATCH_PATH

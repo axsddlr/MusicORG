@@ -4,15 +4,25 @@ from __future__ import annotations
 
 from PySide6.QtCore import QThread, Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout,
+    QCheckBox,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
     QWidget,
 )
 
 from musicorg.core.syncer import SyncPlan
+from musicorg.ui.utils import safe_disconnect_multiple
 from musicorg.ui.widgets.dir_picker import DirPicker
 from musicorg.ui.widgets.progress_bar import ProgressIndicator
-from musicorg.ui.utils import safe_disconnect_multiple
 from musicorg.workers.sync_worker import SyncExecuteWorker, SyncPlanWorker
 
 STATUS_COLORS = {
@@ -20,6 +30,14 @@ STATUS_COLORS = {
     "copied": "#4CAF50",
     "exists": "#FF9800",
     "error": "#F44336",
+}
+
+MATCH_REASON_LABELS = {
+    "": "-",
+    "path": "Path/Filename",
+    "track_uid": "Track UID",
+    "identity_key": "Identity Key",
+    "exact_hash": "Exact Hash",
 }
 
 
@@ -81,12 +99,13 @@ class SyncPanel(QWidget):
 
         # Plan table
         self._plan_table = QTableWidget()
-        self._plan_table.setColumnCount(3)
-        self._plan_table.setHorizontalHeaderLabels(["Source", "Destination", "Status"])
+        self._plan_table.setColumnCount(4)
+        self._plan_table.setHorizontalHeaderLabels(["Source", "Destination", "Status", "Match"])
         header = self._plan_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self._plan_table.setAlternatingRowColors(True)
         layout.addWidget(self._plan_table, 1)
 
@@ -182,14 +201,18 @@ class SyncPanel(QWidget):
             src_item = QTableWidgetItem(str(item.source))
             dest_item = QTableWidgetItem(str(item.dest))
             status_item = QTableWidgetItem(item.status.upper())
+            reason_text = MATCH_REASON_LABELS.get(item.match_reason or "", item.match_reason or "-")
+            reason_item = QTableWidgetItem(reason_text)
 
             color = STATUS_COLORS.get(item.status, "#000000")
             from PySide6.QtGui import QColor
+
             status_item.setForeground(QColor(color))
 
             self._plan_table.setItem(i, 0, src_item)
             self._plan_table.setItem(i, 1, dest_item)
             self._plan_table.setItem(i, 2, status_item)
+            self._plan_table.setItem(i, 3, reason_item)
 
     def _start_sync(self) -> None:
         if not self._plan:
@@ -260,13 +283,15 @@ class SyncPanel(QWidget):
         plan_worker = self._plan_worker
         plan_thread = self._plan_thread
         if plan_worker and plan_thread:
-            safe_disconnect_multiple([
-                (plan_worker.progress, self._on_plan_progress),
-                (plan_worker.finished, self._on_plan_done),
-                (plan_worker.error, self._on_plan_error),
-                (plan_worker.finished, plan_thread.quit),
-                (plan_worker.error, plan_thread.quit),
-            ])
+            safe_disconnect_multiple(
+                [
+                    (plan_worker.progress, self._on_plan_progress),
+                    (plan_worker.finished, self._on_plan_done),
+                    (plan_worker.error, self._on_plan_error),
+                    (plan_worker.finished, plan_thread.quit),
+                    (plan_worker.error, plan_thread.quit),
+                ]
+            )
         if plan_worker:
             plan_worker.deleteLater()
             self._plan_worker = None
@@ -278,15 +303,17 @@ class SyncPanel(QWidget):
         sync_worker = self._sync_worker
         sync_thread = self._sync_thread
         if sync_worker and sync_thread:
-            safe_disconnect_multiple([
-                (sync_worker.progress, self._on_sync_progress),
-                (sync_worker.finished, self._on_sync_done),
-                (sync_worker.error, self._on_sync_error),
-                (sync_worker.cancelled, self._on_sync_cancelled),
-                (sync_worker.finished, sync_thread.quit),
-                (sync_worker.error, sync_thread.quit),
-                (sync_worker.cancelled, sync_thread.quit),
-            ])
+            safe_disconnect_multiple(
+                [
+                    (sync_worker.progress, self._on_sync_progress),
+                    (sync_worker.finished, self._on_sync_done),
+                    (sync_worker.error, self._on_sync_error),
+                    (sync_worker.cancelled, self._on_sync_cancelled),
+                    (sync_worker.finished, sync_thread.quit),
+                    (sync_worker.error, sync_thread.quit),
+                    (sync_worker.cancelled, sync_thread.quit),
+                ]
+            )
         if sync_worker:
             sync_worker.deleteLater()
             self._sync_worker = None
@@ -307,9 +334,3 @@ class SyncPanel(QWidget):
             self._sync_thread.wait()
         self._cleanup_plan()
         self._cleanup_sync()
-
-
-
-
-
-
