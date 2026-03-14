@@ -49,23 +49,11 @@ def _get_value(tags: Any, key: str) -> Any:
     return getattr(tags, key, "")
 
 
+from musicorg.core.text_utils import normalize_loose as _normalize_loose, path_artist_album_hints as _path_hints
+
+
 def _normalize_text(value: Any) -> str:
     return " ".join(str(value or "").strip().lower().replace("_", " ").split())
-
-
-def _normalize_loose(value: Any) -> str:
-    import re
-
-    cleaned = re.sub(r"[^\w]+", " ", str(value or "").lower().replace("_", " "))
-    return " ".join(cleaned.split())
-
-
-def _path_hints(path: Path) -> tuple[str, str]:
-    parent = path.parent
-    album = parent.name if parent != path else ""
-    grandparent = parent.parent
-    artist = grandparent.name if grandparent != parent else ""
-    return artist, album
 
 
 def _coerce_int(value: Any) -> int:
@@ -182,60 +170,64 @@ class TrackIdentityIndex:
         self._lock = threading.RLock()
 
     def open(self) -> None:
-        if self._conn is not None:
-            return
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self._db_path, check_same_thread=False)
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
-        conn.executescript(SCHEMA_SQL)
-        conn.commit()
-        self._conn = conn
+        with self._lock:
+            if self._conn is not None:
+                return
+            self._db_path.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(self._db_path, check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+            conn.executescript(SCHEMA_SQL)
+            conn.commit()
+            self._conn = conn
 
     def close(self) -> None:
-        if self._conn is None:
-            return
-        self._conn.close()
-        self._conn = None
+        with self._lock:
+            if self._conn is None:
+                return
+            self._conn.close()
+            self._conn = None
 
     def get(self, path: str | Path, mtime_ns: int, size: int) -> TrackIdentityRecord | None:
-        row = self._conn_or_raise().execute(
-            """
-            SELECT
-                path, mtime_ns, size, track_uid,
-                strict_identity_key, loose_identity_key, title_key,
-                content_sha1, duration
-            FROM track_identity
-            WHERE path = ? AND mtime_ns = ? AND size = ?
-            """,
-            (self._normalize_path(path), int(mtime_ns), int(size)),
-        ).fetchone()
-        if row is None:
-            return None
-        return TrackIdentityRecord(
-            path=Path(str(row[0])),
-            mtime_ns=int(row[1]),
-            size=int(row[2]),
-            track_uid=str(row[3] or ""),
-            strict_identity_key=str(row[4] or ""),
-            loose_identity_key=str(row[5] or ""),
-            title_key=str(row[6] or ""),
-            content_sha1=str(row[7] or ""),
-            duration=float(row[8] or 0.0),
-        )
+        with self._lock:
+            row = self._conn_or_raise().execute(
+                """
+                SELECT
+                    path, mtime_ns, size, track_uid,
+                    strict_identity_key, loose_identity_key, title_key,
+                    content_sha1, duration
+                FROM track_identity
+                WHERE path = ? AND mtime_ns = ? AND size = ?
+                """,
+                (self._normalize_path(path), int(mtime_ns), int(size)),
+            ).fetchone()
+            if row is None:
+                return None
+            return TrackIdentityRecord(
+                path=Path(str(row[0])),
+                mtime_ns=int(row[1]),
+                size=int(row[2]),
+                track_uid=str(row[3] or ""),
+                strict_identity_key=str(row[4] or ""),
+                loose_identity_key=str(row[5] or ""),
+                title_key=str(row[6] or ""),
+                content_sha1=str(row[7] or ""),
+                duration=float(row[8] or 0.0),
+            )
 
     def get_content_sha1(self, path: str | Path, mtime_ns: int, size: int) -> str:
-        row = self._conn_or_raise().execute(
-            """
-            SELECT content_sha1
-            FROM track_identity
-            WHERE path = ? AND mtime_ns = ? AND size = ?
-            """,
-            (self._normalize_path(path), int(mtime_ns), int(size)),
-        ).fetchone()
-        if row is None:
-            return ""
-        return str(row[0] or "")
+        with self._lock:
+            row = self._conn_or_raise().execute(
+                """
+                SELECT content_sha1
+                FROM track_identity
+                WHERE path = ? AND mtime_ns = ? AND size = ?
+                """,
+                (self._normalize_path(path), int(mtime_ns), int(size)),
+            ).fetchone()
+            if row is None:
+                return ""
+            return str(row[0] or "")
 
     def upsert(
         self,

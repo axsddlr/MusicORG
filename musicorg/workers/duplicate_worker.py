@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+
+_logger = logging.getLogger(__name__)
 
 from musicorg.core.duplicate_finder import DuplicateGroup, find_duplicates
 from musicorg.core.scanner import FileScanner
@@ -56,14 +59,16 @@ class DuplicateScanWorker(BaseWorker):
                 try:
                     cache = TagCache(self._cache_db_path)
                     cache.open()
-                except Exception:
+                except Exception as e:
+                    _logger.warning("Failed to open tag cache %s: %s — cache disabled", self._cache_db_path, e)
                     cache = None
 
             if self._identity_db_path:
                 try:
                     identity_index = TrackIdentityIndex(self._identity_db_path)
                     identity_index.open()
-                except Exception:
+                except Exception as e:
+                    _logger.warning("Failed to open identity index %s: %s — UID matching disabled", self._identity_db_path, e)
                     identity_index = None
 
             # Phase 2: Read tags
@@ -83,7 +88,8 @@ class DuplicateScanWorker(BaseWorker):
                 if cache:
                     try:
                         tag_data = cache.get(af.path, af.mtime_ns, af.size)
-                    except Exception:
+                    except Exception as e:
+                        _logger.debug("Cache get failed for %s: %s", af.path, e)
                         tag_data = None
 
                 if tag_data is None:
@@ -91,7 +97,8 @@ class DuplicateScanWorker(BaseWorker):
                         tag_data = tm.read(af.path)
                         if cache:
                             cache_entries.append((af.path, af.mtime_ns, af.size, tag_data))
-                    except Exception:
+                    except Exception as e:
+                        _logger.debug("Failed to read tags for %s: %s — skipping", af.path, e)
                         continue
 
                 if identity_index:
@@ -104,8 +111,8 @@ class DuplicateScanWorker(BaseWorker):
                             use_path_hints=(self._match_mode != "strict"),
                         )
                         track_uids[af.path] = record.track_uid
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        _logger.debug("identity_index.upsert failed for %s: %s", af.path, e)
 
                 file_tags.append((af.path, tag_data, af.size))
 
@@ -113,8 +120,8 @@ class DuplicateScanWorker(BaseWorker):
             if cache and cache_entries:
                 try:
                     cache.put_many(cache_entries)
-                except Exception:
-                    pass
+                except Exception as e:
+                    _logger.warning("Failed to write to tag cache: %s", e)
 
             # Phase 3: Find duplicates
             self.progress.emit(total, total, "Analyzing duplicates...")
@@ -132,13 +139,13 @@ class DuplicateScanWorker(BaseWorker):
             if identity_index:
                 try:
                     identity_index.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    _logger.debug("identity_index.close failed: %s", e)
             if cache:
                 try:
                     cache.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    _logger.debug("cache.close failed: %s", e)
 
 
 class DuplicateDeleteWorker(BaseWorker):

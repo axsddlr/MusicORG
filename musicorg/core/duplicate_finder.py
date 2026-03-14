@@ -26,33 +26,16 @@ _REASON_CONFIDENCE: dict[MatchReason, float] = {
     "unknown": 0.0,
 }
 
-_LEADING_TRACK_PREFIX_RE = re.compile(
-    r"^\s*(?:(?:(?:#|\d{1,3})\s*(?:[-_.]|\u2013|\u2014)\s*)*(?:#|\d{1,3}))\s*(?:(?:[-_.]|\u2013|\u2014)\s*)?"
+from musicorg.core.text_utils import (
+    LEADING_TRACK_PREFIX_RE as _LEADING_TRACK_PREFIX_RE,
+    normalize_loose as _normalize_identity_component,
+    path_artist_album_hints as _path_hints,
 )
 
 
 def normalize_title(title: str) -> str:
     """Lowercase, strip, and collapse whitespace."""
     return re.sub(r"\s+", " ", title.strip().lower())
-
-
-def _normalize_identity_component(value: str) -> str:
-    """Normalize punctuation and spacing for flexible matching."""
-    cleaned = re.sub(r"[^\w]+", " ", value.lower().replace("_", " "))
-    return " ".join(cleaned.split())
-
-
-def _path_hints(path: Path) -> tuple[str, str]:
-    """Best-effort (artist, album) from path segments."""
-    album = ""
-    artist = ""
-    parent = path.parent
-    if parent != path:
-        album = parent.name
-        grandparent = parent.parent
-        if grandparent != parent:
-            artist = grandparent.name
-    return artist, album
 
 
 def _normalized_filename_title(path: Path) -> str:

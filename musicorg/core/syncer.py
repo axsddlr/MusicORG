@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import shutil
 from dataclasses import dataclass, field
@@ -11,7 +12,19 @@ from typing import Callable
 
 from musicorg.core.scanner import AudioFile, FileScanner
 from musicorg.core.tagger import TagManager
+from musicorg.core.text_utils import (
+    LEADING_TRACK_PREFIX_RE as _LEADING_TRACK_PREFIX_RE,
+    normalize_loose as _normalize_identity_component,
+    path_artist_album_hints as _path_artist_album_hints,
+)
 from musicorg.core.track_identity_index import TrackIdentityIndex
+
+_logger = logging.getLogger(__name__)
+
+SYNC_MATCH_PATH = "path"
+SYNC_MATCH_TRACK_UID = "track_uid"
+SYNC_MATCH_IDENTITY = "identity_key"
+SYNC_MATCH_EXACT_HASH = "exact_hash"
 
 
 @dataclass
@@ -22,7 +35,7 @@ class SyncItem:
     dest: Path
     status: str = "pending"  # pending, copied, exists, error
     error: str = ""
-
+    match_reason: str = ""
 
 @dataclass
 class SyncPlan:
@@ -117,16 +130,6 @@ def _normalize_track_value(value: str) -> str:
     return " ".join(value.strip().lower().replace("_", " ").split())
 
 
-def _normalize_identity_component(value: str) -> str:
-    """Normalize text for identity matching across punctuation variants."""
-    cleaned = re.sub(r"[^\w]+", " ", value.lower().replace("_", " "))
-    return " ".join(cleaned.split())
-
-
-_LEADING_TRACK_PREFIX_RE = re.compile(
-    r"^\s*(?:(?:(?:#|\d{1,3})\s*(?:[-_.]|\u2013|\u2014)\s*)*(?:#|\d{1,3}))\s*(?:(?:[-_.]|\u2013|\u2014)\s*)?"
-)
-
 
 def _normalize_filename_for_match(path: Path) -> tuple[str, str]:
     """Normalize a filename for equivalence checks across prefix variants."""
@@ -196,18 +199,6 @@ def _identity_tuple(path: Path, tags: dict) -> tuple[str, str, str]:
         _normalize_identity_component(str(title)),
     )
 
-
-def _path_artist_album_hints(path: Path) -> tuple[str, str]:
-    """Best-effort artist/album guesses from path segments."""
-    album = ""
-    artist = ""
-    parent = path.parent
-    if parent != path:
-        album = parent.name
-        grandparent = parent.parent
-        if grandparent != parent:
-            artist = grandparent.name
-    return artist, album
 
 
 def _identity_candidates(path: Path, tags: dict) -> set[tuple[str, str, str]]:
@@ -298,7 +289,8 @@ def _get_or_compute_sha1(
     if identity_index is not None:
         try:
             existing = identity_index.get_content_sha1(path, af.mtime_ns, af.size)
-        except Exception:
+        except Exception as e:
+            _logger.debug("identity_index lookup failed for %s: %s", path, e)
             existing = ""
         if existing:
             hash_cache[path] = existing
@@ -315,8 +307,8 @@ def _get_or_compute_sha1(
                 content_sha1=digest,
                 use_path_hints=True,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            _logger.debug("identity_index upsert failed for %s: %s", path, e)
     return digest
 
 
@@ -390,7 +382,8 @@ class SyncManager:
             try:
                 identity_index = TrackIdentityIndex(self._identity_db_path)
                 identity_index.open()
-            except Exception:
+            except Exception as e:
+                _logger.warning("Failed to open identity index %s: %s — matching will be limited", self._identity_db_path, e)
                 identity_index = None
 
         source_track_keys: set[tuple[str, str, str, int, int]] = set()
@@ -436,7 +429,8 @@ class SyncManager:
                 if identity_index is not None:
                     try:
                         record = identity_index.get(af.path, af.mtime_ns, af.size)
-                    except Exception:
+                    except Exception as e:
+                        _logger.debug("identity_index.get failed for %s: %s", af.path, e)
                         record = None
 
                 if record is not None:
@@ -449,7 +443,8 @@ class SyncManager:
                 else:
                     try:
                         dest_tags = self._tag_manager.read(af.path).as_dict()
-                    except Exception:
+                    except Exception as e:
+                        _logger.debug("Failed to read tags for %s: %s", af.path, e)
                         dest_tags = {}
                     candidates.update(_identity_candidates(af.path, dest_tags))
 
@@ -462,7 +457,8 @@ class SyncManager:
                                 dest_tags,
                                 use_path_hints=True,
                             )
-                        except Exception:
+                        except Exception as e:
+                            _logger.debug("identity_index.upsert failed for %s: %s", af.path, e)
                             record = None
                         if record is not None:
                             if record.track_uid:
@@ -491,7 +487,8 @@ class SyncManager:
 
                 try:
                     source_tags = self._tag_manager.read(af.path).as_dict()
-                except Exception:
+                except Exception as e:
+                    _logger.debug("Failed to read tags for %s: %s", af.path, e)
                     source_tags = {}
                 source_tag_cache[af.path] = source_tags
 
@@ -509,7 +506,8 @@ class SyncManager:
                             source_tags,
                             use_path_hints=True,
                         )
-                    except Exception:
+                    except Exception as e:
+                        _logger.debug("identity_index.upsert failed for %s: %s", af.path, e)
                         record = None
                     if record is not None:
                         source_uid = record.track_uid
@@ -529,10 +527,13 @@ class SyncManager:
 
                 if _path_exists_or_equivalent(dest_path, dest_dir_keys):
                     item.status = "exists"
+                    item.match_reason = SYNC_MATCH_PATH
                 elif source_uid and source_uid in dest_track_uids:
                     item.status = "exists"
+                    item.match_reason = SYNC_MATCH_TRACK_UID
                 elif source_candidates & dest_identity_set:
                     item.status = "exists"
+                    item.match_reason = SYNC_MATCH_IDENTITY
                 else:
                     source_sha = _get_or_compute_sha1(
                         af.path,
@@ -554,6 +555,7 @@ class SyncManager:
                         )
                         if source_sha in dest_hashes:
                             item.status = "exists"
+                            item.match_reason = SYNC_MATCH_EXACT_HASH
                 plan.items.append(item)
 
             if include_reverse and not self._cancelled:
@@ -608,6 +610,7 @@ class SyncManager:
                     item = SyncItem(source=af.path, dest=source_path)
                     if _path_exists_or_equivalent(source_path, source_dir_keys):
                         item.status = "exists"
+                        item.match_reason = SYNC_MATCH_PATH
                     plan.items.append(item)
 
             return plan
@@ -615,8 +618,8 @@ class SyncManager:
             if identity_index is not None:
                 try:
                     identity_index.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    _logger.debug("identity_index.close failed: %s", e)
 
     def execute_sync(
         self,
@@ -640,7 +643,8 @@ class SyncManager:
             try:
                 identity_index = TrackIdentityIndex(self._identity_db_path)
                 identity_index.open()
-            except Exception:
+            except Exception as e:
+                _logger.warning("Failed to open identity index %s: %s — SHA1 matching disabled", self._identity_db_path, e)
                 identity_index = None
 
         source_hash_cache: dict[Path, str] = {}
@@ -656,6 +660,8 @@ class SyncManager:
                 # Extra safety check: verify destination doesn't exist unless overwriting.
                 if skip_existing and item.dest.exists():
                     item.status = "exists"
+                    if not item.match_reason:
+                        item.match_reason = SYNC_MATCH_PATH
                     continue
 
                 try:
@@ -668,7 +674,8 @@ class SyncManager:
                             stat = item.dest.stat()
                             try:
                                 tags = self._tag_manager.read(item.dest).as_dict()
-                            except Exception:
+                            except Exception as e:
+                                _logger.debug("Failed to read tags for %s: %s", item.dest, e)
                                 tags = {}
                             sha1 = _file_sha1(item.source, source_hash_cache) or ""
                             identity_index.upsert(
@@ -679,8 +686,8 @@ class SyncManager:
                                 content_sha1=sha1,
                                 use_path_hints=True,
                             )
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            _logger.debug("identity_index.upsert failed for %s: %s", item.dest, e)
                 except Exception as e:
                     item.status = "error"
                     item.error = str(e)
@@ -690,5 +697,9 @@ class SyncManager:
             if identity_index is not None:
                 try:
                     identity_index.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    _logger.debug("identity_index.close failed: %s", e)
+
+
+
+
