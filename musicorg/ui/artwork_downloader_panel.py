@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from musicorg.core.autotagger import MatchCandidate
 from musicorg.core.tagger import TagManager
+from musicorg.ui.widgets.artwork_paste import PasteArtworkLabel, clipboard_image_payload
 from musicorg.ui.widgets.match_list import MatchList
 from musicorg.ui.widgets.progress_bar import ProgressIndicator
 from musicorg.ui.utils import safe_disconnect_multiple
@@ -123,7 +124,8 @@ class ArtworkDownloaderPanel(QDialog):
         self._preview_title_label.setObjectName("SectionHeader")
         self._preview_title_label.setWordWrap(True)
         preview_layout.addWidget(self._preview_title_label)
-        self._preview_image_label = QLabel("No preview")
+        self._preview_image_label = PasteArtworkLabel("No preview")
+        self._preview_image_label.paste_requested.connect(self._paste_artwork_from_clipboard)
         self._preview_image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._preview_image_label.setMinimumHeight(260)
         self._preview_image_label.setObjectName("AlbumCover")
@@ -143,12 +145,15 @@ class ArtworkDownloaderPanel(QDialog):
         apply_layout.setContentsMargins(0, 0, 0, 0)
         apply_layout.setSpacing(8)
         self._only_missing_chk = QCheckBox("Only fill missing artwork")
+        self._paste_btn = QPushButton("Paste Image")
+        self._paste_btn.clicked.connect(self._paste_artwork_from_clipboard)
         self._apply_btn = QPushButton("Apply Artwork")
         self._apply_btn.setProperty("role", "accent")
         self._apply_btn.setToolTip("Write the current preview artwork to loaded files.")
         self._apply_btn.clicked.connect(self._apply_artwork)
         apply_layout.addWidget(self._only_missing_chk)
         apply_layout.addStretch()
+        apply_layout.addWidget(self._paste_btn)
         apply_layout.addWidget(self._apply_btn)
         layout.addLayout(apply_layout)
 
@@ -204,12 +209,14 @@ class ArtworkDownloaderPanel(QDialog):
             self._search_album_btn.setEnabled(False)
             self._search_single_btn.setEnabled(False)
             self._only_missing_chk.setEnabled(False)
+            self._paste_btn.setEnabled(False)
             self._apply_btn.setEnabled(False)
             return
         has_files = bool(self._files)
         self._search_album_btn.setEnabled(has_files)
         self._search_single_btn.setEnabled(len(self._files) == 1)
         self._only_missing_chk.setEnabled(has_files)
+        self._paste_btn.setEnabled(not self._preview_in_progress)
         has_preview = bool(self._selected_artwork_data)
         self._apply_btn.setEnabled(has_files and has_preview and not self._preview_in_progress)
 
@@ -523,6 +530,47 @@ class ArtworkDownloaderPanel(QDialog):
         self._preview_image_label.setText("No preview")
         self._preview_meta_label.setText(message)
         self._refresh_controls()
+
+    def _paste_artwork_from_clipboard(self) -> None:
+        if self._apply_in_progress:
+            QMessageBox.information(
+                self,
+                "Artwork Downloader",
+                "Wait for the current artwork apply job to finish before pasting artwork.",
+            )
+            return
+        payload = clipboard_image_payload()
+        if payload is None:
+            QMessageBox.information(
+                self,
+                "Paste Artwork",
+                "Copy an image to the clipboard first, then paste it into the artwork preview box.",
+            )
+            return
+
+        self._cancel_preview()
+        artwork_data, artwork_mime = payload
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(artwork_data):
+            QMessageBox.warning(
+                self,
+                "Invalid Artwork",
+                "The clipboard data could not be read as an image.",
+            )
+            return
+
+        self._selected_artwork_data = bytes(artwork_data)
+        self._selected_artwork_mime = artwork_mime or "image/png"
+        self._preview_source_pixmap = pixmap
+        self._preview_title_label.setText("Pasted artwork")
+        self._render_preview_pixmap()
+        size_kb = max(1, len(self._selected_artwork_data) // 1024)
+        mime_label = self._selected_artwork_mime or "image/*"
+        self._preview_meta_label.setText(
+            f"Pasted from clipboard - {mime_label} - {size_kb} KB"
+        )
+        self._refresh_controls()
+        self._progress.finish("Clipboard artwork ready")
 
     def _apply_artwork(self) -> None:
         if self._apply_in_progress:

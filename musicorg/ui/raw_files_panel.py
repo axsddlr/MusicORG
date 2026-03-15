@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 from PySide6.QtCore import QThread, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
@@ -20,9 +21,11 @@ from PySide6.QtWidgets import (
 )
 
 from musicorg.core.scanner import AudioFile
+from musicorg.ui.batch_rename_dialog import BatchRenameDialog
 from musicorg.ui.widgets.dir_picker import DirPicker
 from musicorg.ui.widgets.progress_bar import ProgressIndicator
 from musicorg.ui.utils import format_file_size, safe_disconnect_multiple
+from musicorg.workers.file_rename_worker import FileRenameSummary, FileRenameWorker
 from musicorg.workers.scan_worker import ScanWorker
 
 PATH_ROLE = int(Qt.ItemDataRole.UserRole)
@@ -44,7 +47,10 @@ class RawFilesPanel(QWidget):
         self._cache_db_path = ""
         self._scan_worker: ScanWorker | None = None
         self._scan_thread: QThread | None = None
+        self._rename_worker: FileRenameWorker | None = None
+        self._rename_thread: QThread | None = None
         self._scan_in_progress = False
+        self._rename_in_progress = False
         self._scan_target_path = ""
         self._last_scanned_path = ""
         self._pending_auto_scan_path = ""
@@ -105,6 +111,10 @@ class RawFilesPanel(QWidget):
         self._deselect_selection_btn.setEnabled(False)
         self._deselect_selection_btn.clicked.connect(self._deselect_all_files)
         action_row.addWidget(self._deselect_selection_btn)
+        self._rename_btn = QPushButton("Batch Rename")
+        self._rename_btn.setEnabled(False)
+        self._rename_btn.clicked.connect(self.open_batch_rename_for_selection)
+        action_row.addWidget(self._rename_btn)
         action_row.addStretch()
         self._editor_btn = QPushButton("Tag Editor")
         self._editor_btn.setEnabled(False)
@@ -121,7 +131,7 @@ class RawFilesPanel(QWidget):
         layout.addLayout(action_row)
 
         hint_label = QLabel(
-            "Ctrl+Click toggles; Shift+Click selects range. Right-click folders to tag all nested files."
+            "Ctrl+Click toggles; Shift+Click selects range. Right-click folders to batch rename or tag all nested files."
         )
         hint_label.setObjectName("StatusMuted")
         hint_label.setWordWrap(True)
@@ -183,6 +193,9 @@ class RawFilesPanel(QWidget):
         """Public method to select all visible files (for keyboard shortcut)."""
         self._select_all_files()
 
+    def open_batch_rename_for_selection(self) -> None:
+        self._open_batch_rename_dialog()
+
     def _deselect_all_files(self) -> None:
         self._tree.clearSelection()
 
@@ -201,6 +214,74 @@ class RawFilesPanel(QWidget):
         if paths:
             self.send_to_artwork_requested.emit(paths)
 
+    def _open_batch_rename_dialog(self, paths: list[Path] | None = None) -> None:
+        if self._scan_in_progress or self._rename_in_progress:
+            QMessageBox.information(
+                self,
+                "Busy",
+                "Wait for the current scan or rename to finish before renaming files.",
+            )
+            return
+
+        target_paths = self._sorted_paths(paths or self.selected_paths())
+        if not target_paths:
+            return
+
+        dialog = BatchRenameDialog(target_paths, self)
+        if not dialog.exec():
+            return
+
+        rename_items = dialog.rename_items()
+        metadata_fields = dialog.metadata_fields()
+        if not rename_items and not metadata_fields:
+            return
+        self._start_batch_rename(
+            rename_items,
+            metadata_rule=dialog.rename_rule(),
+            metadata_fields=metadata_fields,
+        )
+
+    def _start_batch_rename(
+        self,
+        rename_items: list[tuple[Path, Path]],
+        *,
+        metadata_rule=None,
+        metadata_fields: tuple[str, ...] = (),
+    ) -> None:
+        if self._rename_in_progress or (not rename_items and not metadata_fields):
+            return
+
+        self._rename_in_progress = True
+        self._tree.clearSelection()
+        self._scan_btn.setEnabled(False)
+        if metadata_fields:
+            self._progress.start(f"Renaming and updating metadata for {len(rename_items)} files...")
+        else:
+            self._progress.start(f"Renaming {len(rename_items)} files...")
+        self._update_controls()
+
+        self._rename_worker = FileRenameWorker(
+            rename_items,
+            cache_db_path=self._cache_db_path,
+            metadata_rule=metadata_rule,
+            metadata_fields=metadata_fields,
+        )
+        self._rename_thread = QThread()
+        self._rename_worker.moveToThread(self._rename_thread)
+        self._rename_thread.started.connect(self._rename_worker.run)
+        self._rename_worker.progress.connect(
+            self._on_rename_progress,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        self._rename_worker.finished.connect(self._on_rename_finished)
+        self._rename_worker.error.connect(self._on_rename_error)
+        self._rename_worker.cancelled.connect(self._on_rename_cancelled)
+        self._rename_worker.finished.connect(self._rename_thread.quit)
+        self._rename_worker.error.connect(self._rename_thread.quit)
+        self._rename_worker.cancelled.connect(self._rename_thread.quit)
+        self._rename_thread.finished.connect(self._cleanup_rename_thread)
+        self._rename_thread.start()
+
     def _show_context_menu(self, pos) -> None:
         item = self._tree.itemAt(pos)
         paths = self._resolve_context_paths(item)
@@ -208,6 +289,11 @@ class RawFilesPanel(QWidget):
             return
 
         menu = QMenu(self)
+        menu.addAction(
+            f"Batch Rename ({len(paths)} files)...",
+            lambda: self._open_batch_rename_dialog(paths),
+        )
+        menu.addSeparator()
         menu.addAction(
             f"Tag Editor ({len(paths)} files)",
             lambda: self.send_to_editor_requested.emit(paths),
@@ -298,6 +384,8 @@ class RawFilesPanel(QWidget):
             return
 
         normalized = self._normalize_path(path)
+        if self._rename_in_progress:
+            return
         if self._scan_in_progress:
             self._pending_auto_scan_path = normalized
             return
@@ -327,6 +415,7 @@ class RawFilesPanel(QWidget):
         self._scan_worker.cancelled.connect(self._scan_thread.quit)
         self._scan_thread.finished.connect(self._cleanup_scan_thread)
         self._scan_thread.start()
+        self._update_controls()
 
     def _on_scan_progress(self, current: int, total: int, _message: str) -> None:
         self._progress.update_progress(current, total, f"Scanning... {current} files found")
@@ -353,6 +442,7 @@ class RawFilesPanel(QWidget):
         self._scan_btn.setEnabled(True)
         self._scan_in_progress = False
         self._progress.finish(f"Error: {error_message}")
+        self._update_controls()
         QMessageBox.critical(self, "Scan Error", error_message)
         self._run_pending_auto_scan()
 
@@ -360,6 +450,7 @@ class RawFilesPanel(QWidget):
         self._scan_btn.setEnabled(True)
         self._scan_in_progress = False
         self._progress.finish("Scan cancelled")
+        self._update_controls()
 
     def _run_pending_auto_scan(self) -> None:
         if not self._pending_auto_scan_path:
@@ -373,6 +464,43 @@ class RawFilesPanel(QWidget):
         self._dir_picker.set_path(pending)
         self._start_scan(force=False, suppress_errors=True)
 
+    def _on_rename_progress(self, current: int, total: int, message: str) -> None:
+        self._progress.update_progress(current, total, message)
+
+    def _on_rename_finished(self, payload: object) -> None:
+        summary = self._coerce_rename_summary(payload)
+        self._rename_in_progress = False
+        message = f"Renamed {summary['renamed']} files"
+        if summary['metadata_updated']:
+            message += f" and updated metadata in {summary['metadata_updated']} files"
+        self._progress.finish(message)
+        self._update_controls()
+        if summary['metadata_failed']:
+            preview = "\n".join(
+                f"- {path.name}: {error}" for path, error in summary['metadata_failed'][:8]
+            )
+            if len(summary['metadata_failed']) > 8:
+                preview += f"\n... and {len(summary['metadata_failed']) - 8} more"
+            QMessageBox.warning(
+                self,
+                "Metadata Update Warnings",
+                f"Some files were renamed, but metadata cleanup failed:\n{preview}",
+            )
+        self._start_scan(force=True, suppress_errors=True)
+
+    def _on_rename_error(self, error_message: str) -> None:
+        self._rename_in_progress = False
+        self._scan_btn.setEnabled(True)
+        self._progress.finish(f"Rename failed: {error_message}")
+        self._update_controls()
+        QMessageBox.critical(self, "Batch Rename Failed", error_message)
+
+    def _on_rename_cancelled(self) -> None:
+        self._rename_in_progress = False
+        self._scan_btn.setEnabled(True)
+        self._progress.finish("Rename cancelled")
+        self._update_controls()
+
     def _populate_tree(self) -> None:
         self._tree.clear()
         self._file_items = []
@@ -382,7 +510,7 @@ class RawFilesPanel(QWidget):
         root_item.setData(0, PATH_ROLE, str(root_path))
         root_item.setData(0, ITEM_KIND_ROLE, ITEM_KIND_FOLDER)
         root_item.setFlags(root_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-        root_item.setExpanded(True)
+        root_item.setExpanded(False)
         folder_items: dict[Path, QTreeWidgetItem] = {root_path: root_item}
 
         for audio_file in self._all_files:
@@ -403,7 +531,7 @@ class RawFilesPanel(QWidget):
             file_item.setData(0, ITEM_KIND_ROLE, ITEM_KIND_FILE)
             self._file_items.append(file_item)
 
-        self._tree.expandToDepth(1)
+        self._tree.collapseAll()
 
     def _ensure_folder_item(
         self,
@@ -458,6 +586,37 @@ class RawFilesPanel(QWidget):
             return None
         return Path(str(raw_path))
 
+    @staticmethod
+    def _coerce_rename_summary(payload: object) -> FileRenameSummary:
+        if not isinstance(payload, dict):
+            return {"renamed": 0, "total": 0, "metadata_updated": 0, "metadata_failed": []}
+        typed_payload = cast(FileRenameSummary, payload)
+        try:
+            renamed = max(0, int(typed_payload.get("renamed", 0)))
+        except (TypeError, ValueError):
+            renamed = 0
+        try:
+            total = max(0, int(typed_payload.get("total", 0)))
+        except (TypeError, ValueError):
+            total = 0
+        try:
+            metadata_updated = max(0, int(typed_payload.get("metadata_updated", 0)))
+        except (TypeError, ValueError):
+            metadata_updated = 0
+        metadata_failed = []
+        raw_failed = typed_payload.get("metadata_failed", [])
+        if isinstance(raw_failed, list):
+            for item in raw_failed:
+                if not isinstance(item, (list, tuple)) or len(item) != 2:
+                    continue
+                metadata_failed.append((Path(item[0]), str(item[1])))
+        return {
+            "renamed": renamed,
+            "total": total,
+            "metadata_updated": metadata_updated,
+            "metadata_failed": metadata_failed,
+        }
+
     def _on_selection_changed(self) -> None:
         selected = len(self.selected_paths())
         self._selection_label.setText(f"{selected} selected")
@@ -468,14 +627,16 @@ class RawFilesPanel(QWidget):
         has_files = bool(self._file_items)
         selected_count = len(self.selected_paths())
         has_selection = selected_count > 0
-        self._select_all_btn.setEnabled(has_files)
+        tools_enabled = has_selection and not self._scan_in_progress and not self._rename_in_progress
+        self._select_all_btn.setEnabled(has_files and not self._scan_in_progress and not self._rename_in_progress)
         self._deselect_all_btn.setEnabled(has_selection)
         self._deselect_selection_btn.setEnabled(has_selection)
         self._expand_all_btn.setEnabled(has_files)
         self._collapse_all_btn.setEnabled(has_files)
-        self._editor_btn.setEnabled(has_selection)
-        self._autotag_btn.setEnabled(has_selection)
-        self._artwork_btn.setEnabled(has_selection)
+        self._rename_btn.setEnabled(tools_enabled)
+        self._editor_btn.setEnabled(tools_enabled)
+        self._autotag_btn.setEnabled(tools_enabled)
+        self._artwork_btn.setEnabled(tools_enabled)
 
     def _emit_selection_stats(self) -> None:
         self.selection_stats_changed.emit(len(self._ordered_paths), len(self.selected_paths()))
@@ -510,12 +671,39 @@ class RawFilesPanel(QWidget):
             scan_thread.deleteLater()
             self._scan_thread = None
 
+    def _cleanup_rename_thread(self) -> None:
+        rename_worker = self._rename_worker
+        rename_thread = self._rename_thread
+        if rename_worker and rename_thread:
+            safe_disconnect_multiple([
+                (rename_worker.progress, self._on_rename_progress),
+                (rename_worker.finished, self._on_rename_finished),
+                (rename_worker.error, self._on_rename_error),
+                (rename_worker.cancelled, self._on_rename_cancelled),
+                (rename_worker.finished, rename_thread.quit),
+                (rename_worker.error, rename_thread.quit),
+                (rename_worker.cancelled, rename_thread.quit),
+            ])
+        if rename_worker:
+            rename_worker.deleteLater()
+            self._rename_worker = None
+        if rename_thread:
+            rename_thread.deleteLater()
+            self._rename_thread = None
+
     def shutdown(self, timeout_ms: int = 3000) -> None:
         _ = timeout_ms
         self._auto_scan_timer.stop()
         if self._scan_worker:
             self._scan_worker.cancel()
+        if self._rename_worker:
+            self._rename_worker.cancel()
         if self._scan_thread and self._scan_thread.isRunning():
             self._scan_thread.quit()
             self._scan_thread.wait()
+        if self._rename_thread and self._rename_thread.isRunning():
+            self._rename_thread.quit()
+            self._rename_thread.wait()
         self._cleanup_scan_thread()
+        self._cleanup_rename_thread()
+

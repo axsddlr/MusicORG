@@ -46,6 +46,7 @@ class MainWindow(QMainWindow):
         self._tag_editor_action: QAction | None = None
         self._autotag_action: QAction | None = None
         self._artwork_action: QAction | None = None
+        self._batch_rename_action: QAction | None = None
         self._panel_selection_stats: dict[str, tuple[int, int]] = {
             "source": (0, 0),
             "raw_files": (0, 0),
@@ -78,7 +79,6 @@ class MainWindow(QMainWindow):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # Main content row: sidebar + stacked panels
         content_row = QHBoxLayout()
         content_row.setContentsMargins(0, 0, 0, 0)
         content_row.setSpacing(0)
@@ -96,7 +96,6 @@ class MainWindow(QMainWindow):
         self._duplicates_panel = DuplicatesPanel()
         self._raw_files_panel = RawFilesPanel()
 
-        # Tag Editor, Auto-Tag, and Artwork Downloader are popup dialogs.
         self._tag_editor_panel = TagEditorPanel(self)
         self._autotag_panel = AutoTagPanel(self)
         self._artwork_downloader_panel = ArtworkDownloaderPanel(self)
@@ -114,10 +113,10 @@ class MainWindow(QMainWindow):
         self._duplicates_panel.set_identity_db_path(identity_path)
         self._raw_files_panel.set_cache_db_path(cache_path)
 
-        self._stack.addWidget(self._source_panel)      # index 0
-        self._stack.addWidget(self._sync_panel)         # index 1
-        self._stack.addWidget(self._duplicates_panel)   # index 2
-        self._stack.addWidget(self._raw_files_panel)    # index 3
+        self._stack.addWidget(self._source_panel)
+        self._stack.addWidget(self._sync_panel)
+        self._stack.addWidget(self._duplicates_panel)
+        self._stack.addWidget(self._raw_files_panel)
         self._content_container = QWidget()
         content_grid = QGridLayout(self._content_container)
         content_grid.setContentsMargins(0, 0, 0, 0)
@@ -131,11 +130,9 @@ class MainWindow(QMainWindow):
 
         outer.addLayout(content_row, 1)
 
-        # Status strip
         self._status_strip = StatusStrip()
         outer.addWidget(self._status_strip)
 
-        # Apply saved dirs
         if self._settings.source_dir:
             self._source_panel.set_source_dir(self._settings.source_dir)
             self._sync_panel.set_source_dir(self._settings.source_dir)
@@ -156,7 +153,6 @@ class MainWindow(QMainWindow):
     def _setup_menu(self) -> None:
         menubar = self.menuBar()
 
-        # File menu
         file_menu = menubar.addMenu("&File")
         exit_action = create_bound_action(
             parent=self,
@@ -167,7 +163,6 @@ class MainWindow(QMainWindow):
         )
         file_menu.addAction(exit_action)
 
-        # Settings menu
         settings_menu = menubar.addMenu("&Settings")
         prefs_action = create_bound_action(
             parent=self,
@@ -189,7 +184,6 @@ class MainWindow(QMainWindow):
         theme_action.triggered.connect(self._open_themes)
         settings_menu.addAction(theme_action)
 
-        # Tools menu
         tools_menu = menubar.addMenu("&Tools")
         self._tag_editor_action = create_bound_action(
             parent=self,
@@ -215,9 +209,11 @@ class MainWindow(QMainWindow):
             handler=self._open_artwork_from_selection,
         )
         tools_menu.addAction(self._artwork_action)
+        self._batch_rename_action = QAction("&Batch Rename Files...", self)
+        self._batch_rename_action.triggered.connect(self._open_batch_rename_from_selection)
+        tools_menu.addAction(self._batch_rename_action)
         self._update_tools_availability(total=0, selected=0)
 
-        # Help menu
         help_menu = menubar.addMenu("&Help")
         shortcuts_action = create_bound_action(
             parent=self,
@@ -232,7 +228,6 @@ class MainWindow(QMainWindow):
         help_menu.addAction(about_action)
 
     def _connect_panels(self) -> None:
-        # Context menu -> Tag Editor / Auto-Tag / Artwork Downloader
         self._source_panel.send_to_editor_requested.connect(self._send_to_editor)
         self._source_panel.send_to_autotag_requested.connect(self._send_to_autotag)
         self._source_panel.send_to_artwork_requested.connect(self._send_to_artwork)
@@ -263,7 +258,6 @@ class MainWindow(QMainWindow):
             len(self._raw_files_panel.selected_paths()),
         )
         self._refresh_tools_and_status_for_active_panel()
-        # Auto-Tag applied -> refresh notice
         self._autotag_panel.tags_applied.connect(
             lambda: self._status_strip.show_message("Tags applied - re-scan to see changes")
         )
@@ -325,13 +319,17 @@ class MainWindow(QMainWindow):
             self._status_strip.show_message("No panel active to select tracks in", 2400)
 
     def _update_tools_availability(self, total: int, selected: int) -> None:
+        _ = total
         enabled = selected > 0
+        active_name = self._active_selection_panel_name()
         if self._tag_editor_action is not None:
             self._tag_editor_action.setEnabled(enabled)
         if self._autotag_action is not None:
             self._autotag_action.setEnabled(enabled)
         if self._artwork_action is not None:
             self._artwork_action.setEnabled(enabled)
+        if self._batch_rename_action is not None:
+            self._batch_rename_action.setEnabled(enabled and active_name == "raw_files")
 
     def _send_to_editor(self, paths: list[Path]) -> None:
         if paths:
@@ -384,12 +382,27 @@ class MainWindow(QMainWindow):
             return
         self._send_to_artwork(selected_paths)
 
+    def _open_batch_rename_from_selection(self) -> None:
+        active_name = self._active_selection_panel_name()
+        if active_name != "raw_files":
+            self._status_strip.show_message(
+                "Batch rename is available in Raw Files.",
+                2400,
+            )
+            return
+        if not self._raw_files_panel.selected_paths():
+            self._status_strip.show_message(
+                "Select files in Raw Files to batch rename them.",
+                2400,
+            )
+            return
+        self._raw_files_panel.open_batch_rename_for_selection()
+
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self._settings, self)
         if dialog.exec():
             self._autotag_panel.set_discogs_token(self._settings.discogs_token)
             self._artwork_downloader_panel.set_discogs_token(self._settings.discogs_token)
-            # Re-apply settings
             if self._settings.source_dir:
                 self._source_panel.set_source_dir(self._settings.source_dir)
                 self._sync_panel.set_source_dir(self._settings.source_dir)
@@ -428,7 +441,7 @@ class MainWindow(QMainWindow):
             "  - Auto-tagging via MusicBrainz + Discogs\n"
             "  - Artwork downloader with preview + apply to selected files\n"
             "  - Ctrl/Shift range selection and album-level artwork selection\n"
-            "  - Raw filesystem browser for mixed-folder tagging workflows\n"
+            "  - Raw filesystem browser with regex/text batch rename\n"
             "  - Non-destructive directory sync and duplicate review\n"
             "\nHelp:\n"
             "  - Help > Keyboard Shortcuts for keybind and selection reference"
@@ -457,4 +470,3 @@ class MainWindow(QMainWindow):
         self._raw_files_panel.shutdown()
         self._settings.window_geometry = self.saveGeometry()
         super().closeEvent(event)
-

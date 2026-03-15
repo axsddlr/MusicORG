@@ -8,15 +8,25 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
-    QPushButton, QMessageBox, QSpinBox, QWidget,
+    QFileDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QSpinBox,
+    QWidget,
 )
 
 from musicorg.core.tagger import TagData
+from musicorg.ui.widgets.artwork_paste import PasteArtworkLabel, clipboard_image_payload
 
 
 class TagForm(QWidget):
     """A form layout showing all editable tag fields."""
+
     _MAX_ARTWORK_BYTES = 10 * 1024 * 1024
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -41,13 +51,19 @@ class TagForm(QWidget):
         self._artwork_data: bytes = b""
         self._artwork_mime: str = ""
         self._artwork_modified = False
-        self._artwork_preview = QLabel("No Preview")
+        self._artwork_preview = PasteArtworkLabel("No Preview")
         self._artwork_preview.setObjectName("AlbumCover")
         self._artwork_preview.setFixedSize(96, 96)
         self._artwork_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._artwork_label = QLabel("No artwork")
+        self._artwork_preview.paste_requested.connect(self._paste_artwork_from_clipboard)
+        self._artwork_label = QLabel(
+            "No artwork. Click the preview box and press Ctrl+V to paste an image."
+        )
+        self._artwork_label.setWordWrap(True)
         self._choose_artwork_btn = QPushButton("Choose Image...")
         self._choose_artwork_btn.clicked.connect(self._choose_artwork)
+        self._paste_artwork_btn = QPushButton("Paste Image")
+        self._paste_artwork_btn.clicked.connect(self._paste_artwork_from_clipboard)
         self._clear_artwork_btn = QPushButton("Remove")
         self._clear_artwork_btn.clicked.connect(self._clear_artwork)
         self._clear_artwork_btn.setEnabled(False)
@@ -59,6 +75,7 @@ class TagForm(QWidget):
         artwork_layout.addWidget(self._artwork_preview, 0)
         artwork_layout.addWidget(self._artwork_label, 1)
         artwork_layout.addWidget(self._choose_artwork_btn)
+        artwork_layout.addWidget(self._paste_artwork_btn)
         artwork_layout.addWidget(self._clear_artwork_btn)
 
         layout.addRow("Title:", self.title_edit)
@@ -132,7 +149,9 @@ class TagForm(QWidget):
             child.setEnabled(enabled)
         for child in self.findChildren(QSpinBox):
             child.setEnabled(enabled)
+        self._artwork_preview.setEnabled(enabled)
         self._choose_artwork_btn.setEnabled(enabled)
+        self._paste_artwork_btn.setEnabled(enabled)
         self._clear_artwork_btn.setEnabled(enabled and bool(self._artwork_data))
 
     def _choose_artwork(self) -> None:
@@ -158,16 +177,62 @@ class TagForm(QWidget):
             )
             return
         try:
-            self._artwork_data = path.read_bytes()
+            artwork_data = path.read_bytes()
         except OSError:
             self._artwork_data = b""
             self._artwork_mime = ""
             self._refresh_artwork_label()
             return
         mime, _ = mimetypes.guess_type(path.name)
-        self._artwork_mime = mime or "image/jpeg"
+        self._set_artwork_payload(
+            artwork_data,
+            mime or "image/jpeg",
+            source_name=path.name,
+        )
+
+    def _paste_artwork_from_clipboard(self) -> None:
+        payload = clipboard_image_payload()
+        if payload is None:
+            QMessageBox.information(
+                self,
+                "Paste Artwork",
+                "Copy an image to the clipboard first, then paste it into the artwork box.",
+            )
+            return
+        artwork_data, artwork_mime = payload
+        self._set_artwork_payload(
+            artwork_data,
+            artwork_mime,
+            source_name="Clipboard image",
+        )
+
+    def _set_artwork_payload(
+        self,
+        artwork_data: bytes,
+        artwork_mime: str,
+        *,
+        source_name: str,
+    ) -> None:
+        if len(artwork_data) > self._MAX_ARTWORK_BYTES:
+            max_mb = self._MAX_ARTWORK_BYTES // (1024 * 1024)
+            QMessageBox.warning(
+                self,
+                "Artwork Too Large",
+                f"Please choose an image smaller than {max_mb} MB.",
+            )
+            return
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(artwork_data):
+            QMessageBox.warning(
+                self,
+                "Invalid Artwork",
+                "The selected clipboard or file data could not be read as an image.",
+            )
+            return
+        self._artwork_data = bytes(artwork_data)
+        self._artwork_mime = artwork_mime or "image/png"
         self._artwork_modified = True
-        self._refresh_artwork_label(path.name)
+        self._refresh_artwork_label(source_name)
 
     def _clear_artwork(self) -> None:
         self._artwork_data = b""
@@ -207,7 +272,9 @@ class TagForm(QWidget):
             self._artwork_label.setToolTip(label_text)
             self._clear_artwork_btn.setEnabled(True)
         else:
-            self._artwork_label.setText("No artwork")
+            self._artwork_label.setText(
+                "No artwork. Click the preview box and press Ctrl+V to paste an image."
+            )
             self._artwork_label.setToolTip("")
             self._artwork_preview.setPixmap(QPixmap())
             self._artwork_preview.setText("No Preview")
