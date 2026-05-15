@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 
 from musicorg import __version__
 from musicorg.core.tagger import TagData, TagManager
+from musicorg.errors import ErrorCode, MusicOrgError
 
 
 _UUID_RE = re.compile(
@@ -143,7 +144,7 @@ class AutoTagger:
                 for source in attempted_sources
                 if source in source_errors
             )
-            raise RuntimeError(detail)
+            raise MusicOrgError(ErrorCode.SEARCH_EXHAUSTED, message=detail, details={"sources": list(source_errors.keys())})
         return self._build_search_payload(results, source_errors)
 
     def search_item(
@@ -210,7 +211,7 @@ class AutoTagger:
                 for source in attempted_sources
                 if source in source_errors
             )
-            raise RuntimeError(detail)
+            raise MusicOrgError(ErrorCode.SEARCH_EXHAUSTED, message=detail, details={"sources": list(source_errors.keys())})
         return self._build_search_payload(results, source_errors)
 
     def apply_match(self, paths: list[str | Path], match: MatchCandidate) -> bool:
@@ -243,7 +244,7 @@ class AutoTagger:
                 artwork_mime=artwork_mime,
             )
         except Exception as exc:
-            raise RuntimeError(f"Apply match failed: {exc}") from exc
+            raise MusicOrgError(ErrorCode.OPERATION_FAILED, message=f"Apply match failed: {exc}", details={"cause": str(exc)}) from exc
 
     def _resolve_hints_from_files(
         self,
@@ -881,7 +882,7 @@ class AutoTagger:
                 time.sleep(0.35 * (attempt + 1))
         if last_error is not None:
             raise last_error
-        raise RuntimeError("retry wrapper reached an unexpected state")
+        raise MusicOrgError(ErrorCode.PARSE_ERROR, message="retry wrapper reached an unexpected state")
 
     @staticmethod
     def _dedupe_urls(urls: list[str]) -> list[str]:

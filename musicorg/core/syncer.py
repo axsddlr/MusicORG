@@ -131,6 +131,16 @@ def _normalize_track_value(value: str) -> str:
 
 
 
+_HASH_CACHE_MAX = 4096
+
+
+def _bounded_cache_set(cache: dict[Path, str], key: Path, value: str) -> None:
+    """Insert into cache, evicting the oldest entry if at capacity."""
+    if len(cache) >= _HASH_CACHE_MAX:
+        cache.pop(next(iter(cache)))
+    cache[key] = value
+
+
 def _normalize_filename_for_match(path: Path) -> tuple[str, str]:
     """Normalize a filename for equivalence checks across prefix variants."""
     ext = path.suffix.lower()
@@ -254,7 +264,11 @@ def _identity_candidates_from_loose_key(loose_key: str) -> set[tuple[str, str, s
     return {item for item in candidates if item[0] or item[1]}
 
 
-def _file_sha1(path: Path, cache: dict[Path, str]) -> str | None:
+def _file_sha1(
+    path: Path,
+    cache: dict[Path, str],
+    cancel_check: Callable[[], bool] | None = None,
+) -> str | None:
     cached = cache.get(path)
     if cached is not None:
         return cached
@@ -266,10 +280,12 @@ def _file_sha1(path: Path, cache: dict[Path, str]) -> str | None:
                 if not chunk:
                     break
                 digest.update(chunk)
+                if cancel_check and cancel_check():
+                    return None
     except OSError:
         return None
     value = digest.hexdigest()
-    cache[path] = value
+    _bounded_cache_set(cache, path, value)
     return value
 
 
@@ -280,6 +296,7 @@ def _get_or_compute_sha1(
     tags: dict,
     hash_cache: dict[Path, str],
     identity_index: TrackIdentityIndex | None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> str | None:
     """Reuse cached/indexed hash when possible, then persist computed hashes."""
     cached = hash_cache.get(path)
@@ -293,10 +310,10 @@ def _get_or_compute_sha1(
             _logger.debug("identity_index lookup failed for %s: %s", path, e)
             existing = ""
         if existing:
-            hash_cache[path] = existing
+            _bounded_cache_set(hash_cache, path, existing)
             return existing
 
-    digest = _file_sha1(path, hash_cache)
+    digest = _file_sha1(path, hash_cache, cancel_check=cancel_check)
     if digest and identity_index is not None:
         try:
             identity_index.upsert(
@@ -321,6 +338,7 @@ def _ensure_hash_bucket(
     hashes_by_size_ext: dict[tuple[int, str], set[str]],
     loaded_buckets: set[tuple[int, str]],
     identity_index: TrackIdentityIndex | None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> set[str]:
     hashes = hashes_by_size_ext.setdefault(bucket, set())
     if bucket in loaded_buckets:
@@ -336,12 +354,41 @@ def _ensure_hash_bucket(
             tags=tags_by_path.get(path, {}),
             hash_cache=hash_cache,
             identity_index=identity_index,
+            cancel_check=cancel_check,
         )
         if digest:
             hashes.add(digest)
 
     loaded_buckets.add(bucket)
     return hashes
+
+
+@dataclass
+class _PlanContext:
+    """Shared mutable state threaded through plan_sync sub-phases."""
+    source_track_keys: set = field(default_factory=set)
+    source_track_uids: set = field(default_factory=set)
+    dest_track_uids: set = field(default_factory=set)
+    source_identity_set: set = field(default_factory=set)
+    dest_identity_set: set = field(default_factory=set)
+    source_track_uid_by_path: dict = field(default_factory=dict)
+    dest_track_uid_by_path: dict = field(default_factory=dict)
+    source_identity_candidates_by_path: dict = field(default_factory=dict)
+    dest_identity_candidates_by_path: dict = field(default_factory=dict)
+    source_dir_keys: dict = field(default_factory=dict)
+    dest_dir_keys: dict = field(default_factory=dict)
+    source_audio_by_path: dict = field(default_factory=dict)
+    dest_audio_by_path: dict = field(default_factory=dict)
+    source_tag_cache: dict = field(default_factory=dict)
+    dest_tag_cache: dict = field(default_factory=dict)
+    source_files_by_size_ext: dict = field(default_factory=dict)
+    dest_files_by_size_ext: dict = field(default_factory=dict)
+    source_hashes_by_size_ext: dict = field(default_factory=dict)
+    dest_hashes_by_size_ext: dict = field(default_factory=dict)
+    source_hash_buckets_loaded: set = field(default_factory=set)
+    dest_hash_buckets_loaded: set = field(default_factory=set)
+    source_hash_cache: dict = field(default_factory=dict)
+    dest_hash_cache: dict = field(default_factory=dict)
 
 
 class SyncManager:
@@ -374,8 +421,8 @@ class SyncManager:
         source_files = FileScanner(source_dir).scan()
         dest_files = FileScanner(dest_dir).scan()
         total_steps = len(source_files) + (len(dest_files) if include_reverse else 0)
-        step = 0
         plan = SyncPlan()
+        ctx = _PlanContext()
 
         identity_index: TrackIdentityIndex | None = None
         if self._identity_db_path:
@@ -383,236 +430,22 @@ class SyncManager:
                 identity_index = TrackIdentityIndex(self._identity_db_path)
                 identity_index.open()
             except Exception as e:
-                _logger.warning("Failed to open identity index %s: %s — matching will be limited", self._identity_db_path, e)
+                _logger.warning(
+                    "Failed to open identity index %s: %s — matching will be limited",
+                    self._identity_db_path, e,
+                )
                 identity_index = None
 
-        source_track_keys: set[tuple[str, str, str, int, int]] = set()
-        source_track_uids: set[str] = set()
-        dest_track_uids: set[str] = set()
-
-        source_identity_set: set[tuple[str, str, str]] = set()
-        dest_identity_set: set[tuple[str, str, str]] = set()
-
-        source_track_uid_by_path: dict[Path, str] = {}
-        dest_track_uid_by_path: dict[Path, str] = {}
-        source_identity_candidates_by_path: dict[Path, set[tuple[str, str, str]]] = {}
-        dest_identity_candidates_by_path: dict[Path, set[tuple[str, str, str]]] = {}
-
-        source_dir_keys: dict[Path, set[tuple[str, str]]] = {}
-        dest_dir_keys: dict[Path, set[tuple[str, str]]] = {}
-
-        source_audio_by_path: dict[Path, AudioFile] = {}
-        dest_audio_by_path: dict[Path, AudioFile] = {}
-        source_tag_cache: dict[Path, dict] = {}
-        dest_tag_cache: dict[Path, dict] = {}
-
-        source_files_by_size_ext: dict[tuple[int, str], list[Path]] = {}
-        dest_files_by_size_ext: dict[tuple[int, str], list[Path]] = {}
-        source_hashes_by_size_ext: dict[tuple[int, str], set[str]] = {}
-        dest_hashes_by_size_ext: dict[tuple[int, str], set[str]] = {}
-        source_hash_buckets_loaded: set[tuple[int, str]] = set()
-        dest_hash_buckets_loaded: set[tuple[int, str]] = set()
-        source_hash_cache: dict[Path, str] = {}
-        dest_hash_cache: dict[Path, str] = {}
-
         try:
-            # Pre-scan destination tree: collect identity/hash signals.
-            for af in dest_files:
-                dest_audio_by_path[af.path] = af
-                bucket = (af.size, af.extension)
-                dest_files_by_size_ext.setdefault(bucket, []).append(af.path)
-
-                candidates = _identity_candidates(af.path, {})
-                dest_tags: dict = {}
-                record = None
-
-                if identity_index is not None:
-                    try:
-                        record = identity_index.get(af.path, af.mtime_ns, af.size)
-                    except Exception as e:
-                        _logger.debug("identity_index.get failed for %s: %s", af.path, e)
-                        record = None
-
-                if record is not None:
-                    if record.track_uid:
-                        dest_track_uids.add(record.track_uid)
-                        dest_track_uid_by_path[af.path] = record.track_uid
-                    if record.content_sha1:
-                        dest_hashes_by_size_ext.setdefault(bucket, set()).add(record.content_sha1)
-                    candidates.update(_identity_candidates_from_loose_key(record.loose_identity_key))
-                else:
-                    try:
-                        dest_tags = self._tag_manager.read(af.path).as_dict()
-                    except Exception as e:
-                        _logger.debug("Failed to read tags for %s: %s", af.path, e)
-                        dest_tags = {}
-                    candidates.update(_identity_candidates(af.path, dest_tags))
-
-                    if identity_index is not None:
-                        try:
-                            record = identity_index.upsert(
-                                af.path,
-                                af.mtime_ns,
-                                af.size,
-                                dest_tags,
-                                use_path_hints=True,
-                            )
-                        except Exception as e:
-                            _logger.debug("identity_index.upsert failed for %s: %s", af.path, e)
-                            record = None
-                        if record is not None:
-                            if record.track_uid:
-                                dest_track_uids.add(record.track_uid)
-                                dest_track_uid_by_path[af.path] = record.track_uid
-                            if record.content_sha1:
-                                dest_hashes_by_size_ext.setdefault(bucket, set()).add(record.content_sha1)
-                            candidates.update(_identity_candidates_from_loose_key(record.loose_identity_key))
-
-                dest_tag_cache[af.path] = dest_tags
-                dest_identity_candidates_by_path[af.path] = candidates
-                dest_identity_set.update(candidates)
-
-            # Source pass: decide whether each item is pending vs already exists.
-            for af in source_files:
-                source_audio_by_path[af.path] = af
-                bucket = (af.size, af.extension)
-                source_files_by_size_ext.setdefault(bucket, []).append(af.path)
-
-                if self._cancelled:
-                    break
-
-                step += 1
-                if progress_cb:
-                    progress_cb(step, total_steps or 1, af.path.name)
-
-                try:
-                    source_tags = self._tag_manager.read(af.path).as_dict()
-                except Exception as e:
-                    _logger.debug("Failed to read tags for %s: %s", af.path, e)
-                    source_tags = {}
-                source_tag_cache[af.path] = source_tags
-
-                source_track_keys.add(_track_identity(af.path, source_tags))
-
-                source_candidates = _identity_candidates(af.path, source_tags)
-                source_uid = ""
-
-                if identity_index is not None:
-                    try:
-                        record = identity_index.upsert(
-                            af.path,
-                            af.mtime_ns,
-                            af.size,
-                            source_tags,
-                            use_path_hints=True,
-                        )
-                    except Exception as e:
-                        _logger.debug("identity_index.upsert failed for %s: %s", af.path, e)
-                        record = None
-                    if record is not None:
-                        source_uid = record.track_uid
-                        if record.content_sha1:
-                            source_hashes_by_size_ext.setdefault(bucket, set()).add(record.content_sha1)
-                        source_candidates.update(_identity_candidates_from_loose_key(record.loose_identity_key))
-
-                if source_uid:
-                    source_track_uids.add(source_uid)
-                    source_track_uid_by_path[af.path] = source_uid
-
-                source_identity_candidates_by_path[af.path] = source_candidates
-                source_identity_set.update(source_candidates)
-
-                dest_path = _build_dest_path(dest_dir, source_tags, af.extension, self._path_format, af.path)
-                item = SyncItem(source=af.path, dest=dest_path)
-
-                if _path_exists_or_equivalent(dest_path, dest_dir_keys):
-                    item.status = "exists"
-                    item.match_reason = SYNC_MATCH_PATH
-                elif source_uid and source_uid in dest_track_uids:
-                    item.status = "exists"
-                    item.match_reason = SYNC_MATCH_TRACK_UID
-                elif source_candidates & dest_identity_set:
-                    item.status = "exists"
-                    item.match_reason = SYNC_MATCH_IDENTITY
-                else:
-                    source_sha = _get_or_compute_sha1(
-                        af.path,
-                        af=af,
-                        tags=source_tags,
-                        hash_cache=source_hash_cache,
-                        identity_index=identity_index,
-                    )
-                    if source_sha:
-                        dest_hashes = _ensure_hash_bucket(
-                            bucket,
-                            dest_files_by_size_ext,
-                            dest_audio_by_path,
-                            dest_tag_cache,
-                            dest_hash_cache,
-                            dest_hashes_by_size_ext,
-                            dest_hash_buckets_loaded,
-                            identity_index,
-                        )
-                        if source_sha in dest_hashes:
-                            item.status = "exists"
-                            item.match_reason = SYNC_MATCH_EXACT_HASH
-                plan.items.append(item)
-
+            self._prescan_dest(ctx, dest_files, identity_index)
+            step = self._scan_sources(
+                ctx, source_files, dest_dir, identity_index, plan, progress_cb, 0, total_steps,
+            )
             if include_reverse and not self._cancelled:
-                for af in dest_files:
-                    if self._cancelled:
-                        break
-
-                    step += 1
-                    if progress_cb:
-                        progress_cb(step, total_steps or 1, f"reverse: {af.path.name}")
-
-                    dest_tags = dest_tag_cache.get(af.path, {})
-                    track_key = _track_identity(af.path, dest_tags)
-                    if track_key in source_track_keys:
-                        continue
-
-                    dest_uid = dest_track_uid_by_path.get(af.path, "")
-                    if dest_uid and dest_uid in source_track_uids:
-                        continue
-
-                    dest_candidates = dest_identity_candidates_by_path.get(
-                        af.path,
-                        _identity_candidates(af.path, dest_tags),
-                    )
-                    if dest_candidates & source_identity_set:
-                        continue
-
-                    bucket = (af.size, af.extension)
-                    dest_sha = _get_or_compute_sha1(
-                        af.path,
-                        af=af,
-                        tags=dest_tags,
-                        hash_cache=dest_hash_cache,
-                        identity_index=identity_index,
-                    )
-                    if dest_sha:
-                        source_hashes = _ensure_hash_bucket(
-                            bucket,
-                            source_files_by_size_ext,
-                            source_audio_by_path,
-                            source_tag_cache,
-                            source_hash_cache,
-                            source_hashes_by_size_ext,
-                            source_hash_buckets_loaded,
-                            identity_index,
-                        )
-                        if dest_sha in source_hashes:
-                            continue
-
-                    source_track_keys.add(track_key)
-                    source_path = _build_dest_path(source_dir, dest_tags, af.extension, self._path_format, af.path)
-                    item = SyncItem(source=af.path, dest=source_path)
-                    if _path_exists_or_equivalent(source_path, source_dir_keys):
-                        item.status = "exists"
-                        item.match_reason = SYNC_MATCH_PATH
-                    plan.items.append(item)
-
+                self._scan_reverse(
+                    ctx, source_dir, dest_dir, source_files, dest_files,
+                    identity_index, plan, progress_cb, step, total_steps,
+                )
             return plan
         finally:
             if identity_index is not None:
@@ -620,6 +453,238 @@ class SyncManager:
                     identity_index.close()
                 except Exception as e:
                     _logger.debug("identity_index.close failed: %s", e)
+
+    def _prescan_dest(
+        self,
+        ctx: _PlanContext,
+        dest_files: list[AudioFile],
+        identity_index: TrackIdentityIndex | None,
+    ) -> None:
+        """Pre-scan destination tree: collect identity/hash signals."""
+        for af in dest_files:
+            ctx.dest_audio_by_path[af.path] = af
+            bucket = (af.size, af.extension)
+            ctx.dest_files_by_size_ext.setdefault(bucket, []).append(af.path)
+
+            candidates = _identity_candidates(af.path, {})
+            dest_tags: dict = {}
+            record = None
+
+            if identity_index is not None:
+                try:
+                    record = identity_index.get(af.path, af.mtime_ns, af.size)
+                except Exception as e:
+                    _logger.debug("identity_index.get failed for %s: %s", af.path, e)
+                    record = None
+
+            if record is not None:
+                if record.track_uid:
+                    ctx.dest_track_uids.add(record.track_uid)
+                    ctx.dest_track_uid_by_path[af.path] = record.track_uid
+                if record.content_sha1:
+                    ctx.dest_hashes_by_size_ext.setdefault(bucket, set()).add(record.content_sha1)
+                candidates.update(_identity_candidates_from_loose_key(record.loose_identity_key))
+            else:
+                try:
+                    dest_tags = self._tag_manager.read(af.path).as_dict()
+                except Exception as e:
+                    _logger.debug("Failed to read tags for %s: %s", af.path, e)
+                    dest_tags = {}
+                candidates.update(_identity_candidates(af.path, dest_tags))
+
+                if identity_index is not None:
+                    try:
+                        record = identity_index.upsert(
+                            af.path,
+                            af.mtime_ns,
+                            af.size,
+                            dest_tags,
+                            use_path_hints=True,
+                        )
+                    except Exception as e:
+                        _logger.debug("identity_index.upsert failed for %s: %s", af.path, e)
+                        record = None
+                    if record is not None:
+                        if record.track_uid:
+                            ctx.dest_track_uids.add(record.track_uid)
+                            ctx.dest_track_uid_by_path[af.path] = record.track_uid
+                        if record.content_sha1:
+                            ctx.dest_hashes_by_size_ext.setdefault(bucket, set()).add(record.content_sha1)
+                        candidates.update(_identity_candidates_from_loose_key(record.loose_identity_key))
+
+            ctx.dest_tag_cache[af.path] = dest_tags
+            ctx.dest_identity_candidates_by_path[af.path] = candidates
+            ctx.dest_identity_set.update(candidates)
+
+    def _scan_sources(
+        self,
+        ctx: _PlanContext,
+        source_files: list[AudioFile],
+        dest_dir: Path,
+        identity_index: TrackIdentityIndex | None,
+        plan: SyncPlan,
+        progress_cb: Callable[[int, int, str], None] | None,
+        step: int,
+        total_steps: int,
+    ) -> int:
+        """Source pass: decide whether each item is pending vs already exists."""
+        for af in source_files:
+            ctx.source_audio_by_path[af.path] = af
+            bucket = (af.size, af.extension)
+            ctx.source_files_by_size_ext.setdefault(bucket, []).append(af.path)
+
+            if self._cancelled:
+                break
+
+            step += 1
+            if progress_cb:
+                progress_cb(step, total_steps or 1, af.path.name)
+
+            try:
+                source_tags = self._tag_manager.read(af.path).as_dict()
+            except Exception as e:
+                _logger.debug("Failed to read tags for %s: %s", af.path, e)
+                source_tags = {}
+            ctx.source_tag_cache[af.path] = source_tags
+
+            ctx.source_track_keys.add(_track_identity(af.path, source_tags))
+
+            source_candidates = _identity_candidates(af.path, source_tags)
+            source_uid = ""
+
+            if identity_index is not None:
+                try:
+                    record = identity_index.upsert(
+                        af.path,
+                        af.mtime_ns,
+                        af.size,
+                        source_tags,
+                        use_path_hints=True,
+                    )
+                except Exception as e:
+                    _logger.debug("identity_index.upsert failed for %s: %s", af.path, e)
+                    record = None
+                if record is not None:
+                    source_uid = record.track_uid
+                    if record.content_sha1:
+                        ctx.source_hashes_by_size_ext.setdefault(bucket, set()).add(record.content_sha1)
+                    source_candidates.update(_identity_candidates_from_loose_key(record.loose_identity_key))
+
+            if source_uid:
+                ctx.source_track_uids.add(source_uid)
+                ctx.source_track_uid_by_path[af.path] = source_uid
+
+            ctx.source_identity_candidates_by_path[af.path] = source_candidates
+            ctx.source_identity_set.update(source_candidates)
+
+            dest_path = _build_dest_path(dest_dir, source_tags, af.extension, self._path_format, af.path)
+            item = SyncItem(source=af.path, dest=dest_path)
+
+            if _path_exists_or_equivalent(dest_path, ctx.dest_dir_keys):
+                item.status = "exists"
+                item.match_reason = SYNC_MATCH_PATH
+            elif source_uid and source_uid in ctx.dest_track_uids:
+                item.status = "exists"
+                item.match_reason = SYNC_MATCH_TRACK_UID
+            elif source_candidates & ctx.dest_identity_set:
+                item.status = "exists"
+                item.match_reason = SYNC_MATCH_IDENTITY
+            else:
+                source_sha = _get_or_compute_sha1(
+                    af.path,
+                    af=af,
+                    tags=source_tags,
+                    hash_cache=ctx.source_hash_cache,
+                    identity_index=identity_index,
+                    cancel_check=lambda: self._cancelled,
+                )
+                if source_sha:
+                    dest_hashes = _ensure_hash_bucket(
+                        bucket,
+                        ctx.dest_files_by_size_ext,
+                        ctx.dest_audio_by_path,
+                        ctx.dest_tag_cache,
+                        ctx.dest_hash_cache,
+                        ctx.dest_hashes_by_size_ext,
+                        ctx.dest_hash_buckets_loaded,
+                        identity_index,
+                        cancel_check=lambda: self._cancelled,
+                    )
+                    if source_sha in dest_hashes:
+                        item.status = "exists"
+                        item.match_reason = SYNC_MATCH_EXACT_HASH
+            plan.items.append(item)
+        return step
+
+    def _scan_reverse(
+        self,
+        ctx: _PlanContext,
+        source_dir: Path,
+        dest_dir: Path,
+        source_files: list[AudioFile],
+        dest_files: list[AudioFile],
+        identity_index: TrackIdentityIndex | None,
+        plan: SyncPlan,
+        progress_cb: Callable[[int, int, str], None] | None,
+        step: int,
+        total_steps: int,
+    ) -> None:
+        """Reverse scan: find dest files not matched in source pass."""
+        for af in dest_files:
+            if self._cancelled:
+                break
+
+            step += 1
+            if progress_cb:
+                progress_cb(step, total_steps or 1, f"reverse: {af.path.name}")
+
+            dest_tags = ctx.dest_tag_cache.get(af.path, {})
+            track_key = _track_identity(af.path, dest_tags)
+            if track_key in ctx.source_track_keys:
+                continue
+
+            dest_uid = ctx.dest_track_uid_by_path.get(af.path, "")
+            if dest_uid and dest_uid in ctx.source_track_uids:
+                continue
+
+            dest_candidates = ctx.dest_identity_candidates_by_path.get(
+                af.path,
+                _identity_candidates(af.path, dest_tags),
+            )
+            if dest_candidates & ctx.source_identity_set:
+                continue
+
+            bucket = (af.size, af.extension)
+            dest_sha = _get_or_compute_sha1(
+                af.path,
+                af=af,
+                tags=dest_tags,
+                hash_cache=ctx.dest_hash_cache,
+                identity_index=identity_index,
+                cancel_check=lambda: self._cancelled,
+            )
+            if dest_sha:
+                source_hashes = _ensure_hash_bucket(
+                    bucket,
+                    ctx.source_files_by_size_ext,
+                    ctx.source_audio_by_path,
+                    ctx.source_tag_cache,
+                    ctx.source_hash_cache,
+                    ctx.source_hashes_by_size_ext,
+                    ctx.source_hash_buckets_loaded,
+                    identity_index,
+                    cancel_check=lambda: self._cancelled,
+                )
+                if dest_sha in source_hashes:
+                    continue
+
+            ctx.source_track_keys.add(track_key)
+            source_path = _build_dest_path(source_dir, dest_tags, af.extension, self._path_format, af.path)
+            item = SyncItem(source=af.path, dest=source_path)
+            if _path_exists_or_equivalent(source_path, ctx.source_dir_keys):
+                item.status = "exists"
+                item.match_reason = SYNC_MATCH_PATH
+            plan.items.append(item)
 
     def execute_sync(
         self,
@@ -644,7 +709,10 @@ class SyncManager:
                 identity_index = TrackIdentityIndex(self._identity_db_path)
                 identity_index.open()
             except Exception as e:
-                _logger.warning("Failed to open identity index %s: %s — SHA1 matching disabled", self._identity_db_path, e)
+                _logger.warning(
+                    "Failed to open identity index %s: %s — SHA1 matching disabled",
+                    self._identity_db_path, e,
+                )
                 identity_index = None
 
         source_hash_cache: dict[Path, str] = {}
@@ -677,7 +745,10 @@ class SyncManager:
                             except Exception as e:
                                 _logger.debug("Failed to read tags for %s: %s", item.dest, e)
                                 tags = {}
-                            sha1 = _file_sha1(item.source, source_hash_cache) or ""
+                            sha1 = (
+                                _file_sha1(item.source, source_hash_cache, cancel_check=lambda: self._cancelled)
+                                or ""
+                            )
                             identity_index.upsert(
                                 item.dest,
                                 stat.st_mtime_ns,

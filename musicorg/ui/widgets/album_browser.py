@@ -83,6 +83,9 @@ class AlbumBrowser(QScrollArea):
         albums: dict[str, list[FileTableRow]],
         selection_manager: SelectionManager,
     ) -> None:
+        """Set albums to display."""
+        if not albums:
+            return
         self.clear()
         self._selection_manager = selection_manager
         self._album_data = [(name, albums[name]) for name in sorted(albums)]

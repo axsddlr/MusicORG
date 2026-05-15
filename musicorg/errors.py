@@ -33,6 +33,11 @@ class ErrorCode(Enum):
     NETWORK_NOT_FOUND = auto()
     NETWORK_RATE_LIMITED = auto()
     
+    # Auto-tag errors (3500-3999)
+    AUTOTAG_FAILED = auto()
+    SEARCH_EXHAUSTED = auto()
+    PARSE_ERROR = auto()
+
     # Operation errors (4000-4999)
     OPERATION_CANCELLED = auto()
     OPERATION_FAILED = auto()
@@ -64,6 +69,10 @@ ERROR_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.NETWORK_NOT_FOUND: "No matching results found online.",
     ErrorCode.NETWORK_RATE_LIMITED: "Rate limited. Please wait a moment and try again.",
     
+    ErrorCode.AUTOTAG_FAILED: "Auto-tagging failed. Could not find matching metadata online.",
+    ErrorCode.SEARCH_EXHAUSTED: "All search sources were exhausted without finding a match.",
+    ErrorCode.PARSE_ERROR: "Failed to parse response from metadata provider.",
+
     ErrorCode.OPERATION_CANCELLED: "Operation was cancelled by user.",
     ErrorCode.OPERATION_FAILED: "Operation failed. See details for more information.",
     ErrorCode.OPERATION_PARTIAL: "Operation completed with some errors. Review the log.",

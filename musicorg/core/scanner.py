@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+
+_logger = logging.getLogger(__name__)
 
 AUDIO_EXTENSIONS = {
     ".mp3",
@@ -50,11 +53,12 @@ class FileScanner:
                 if p.suffix.lower() in AUDIO_EXTENSIONS:
                     try:
                         results.append(AudioFile(path=p))
-                    except OSError:
+                    except OSError as e:
+                        _logger.debug("Skipping %s: %s", p, e)
                         continue
         return results
 
-    def scan_iter(self):
+    def scan_iter(self) -> None:
         """Yield audio files one at a time (for progress reporting)."""
         for dirpath, _dirnames, filenames in os.walk(self._root):
             for fname in sorted(filenames):
@@ -62,5 +66,6 @@ class FileScanner:
                 if p.suffix.lower() in AUDIO_EXTENSIONS:
                     try:
                         yield AudioFile(path=p)
-                    except OSError:
+                    except OSError as e:
+                        _logger.debug("Skipping %s: %s", p, e)
                         continue

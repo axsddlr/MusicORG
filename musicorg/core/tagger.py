@@ -239,7 +239,10 @@ class TagManager:
                 case ErrorCode.FILE_ACCESS_DENIED:
                     error.suggestion = "Right-click the file → Properties → uncheck 'Read-only', then try again."
                 case ErrorCode.FILE_LOCKED:
-                    error.suggestion = "Close any program using this file (media player, file explorer preview) and try again."
+                    error.suggestion = (
+                        "Close any program using this file "
+                        "(media player, file explorer preview) and try again."
+                    )
                 case ErrorCode.TAG_CORRUPT | ErrorCode.TAG_UNSUPPORTED_FORMAT:
                     error.message = f"Cannot write tags: {path.name} has unsupported or corrupt format"
                     error.suggestion = "This file format cannot be edited. Convert to MP3, FLAC, or M4A first."
@@ -282,5 +285,8 @@ class TagManager:
         except Exception as exc:
             error = classify_exception(exc, path)
             error.message = f"Failed to save tags for {path.name}"
-            error.suggestion = "The file may be locked or the tag format unsupported. Try again or check file permissions."
+            error.suggestion = (
+                "The file may be locked or the tag format unsupported. "
+                "Try again or check file permissions."
+            )
             raise error

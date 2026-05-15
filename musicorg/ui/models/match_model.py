@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PySide6.QtWidgets import QWidget
 
 from musicorg.core.autotagger import MatchCandidate
 
@@ -14,7 +15,7 @@ COLUMNS = ["Source", "Artist", "Album", "Year", "Match %"]
 class MatchModel(QAbstractTableModel):
     """Table model for displaying auto-tag match candidates."""
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._candidates: list[MatchCandidate] = []
 

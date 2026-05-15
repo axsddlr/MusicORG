@@ -131,7 +131,8 @@ class RawFilesPanel(QWidget):
         layout.addLayout(action_row)
 
         hint_label = QLabel(
-            "Ctrl+Click toggles; Shift+Click selects range. Right-click folders to batch rename or tag all nested files."
+            "Ctrl+Click toggles; Shift+Click selects range. "
+            "Right-click folders to batch rename or tag all nested files."
         )
         hint_label.setObjectName("StatusMuted")
         hint_label.setWordWrap(True)
@@ -245,7 +246,7 @@ class RawFilesPanel(QWidget):
         self,
         rename_items: list[tuple[Path, Path]],
         *,
-        metadata_rule=None,
+        metadata_rule: str | None = None,
         metadata_fields: tuple[str, ...] = (),
     ) -> None:
         if self._rename_in_progress or (not rename_items and not metadata_fields):

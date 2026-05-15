@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Mapping
 
 from PySide6.QtCore import QSettings
+
+
+_VALID_PATH_VARS = {"albumartist", "artist", "album", "disc", "disc0", "disc-", "track", "title", "year"}
+_PATH_VAR_RE = re.compile(r"\$([a-zA-Z_][a-zA-Z0-9_-]*)")
 
 
 class AppSettings:
@@ -51,6 +56,9 @@ class AppSettings:
 
     @path_format.setter
     def path_format(self, value: str) -> None:
+        invalid = set(_PATH_VAR_RE.findall(value)) - _VALID_PATH_VARS
+        if invalid:
+            raise ValueError(f"Unknown path format variables: {', '.join(sorted(invalid))}")
         self._qs.setValue("sync/path_format", value)
 
     # -- tag cache --

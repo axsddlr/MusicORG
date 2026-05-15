@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from musicorg.core.tag_cache import TagCache
 from musicorg.core.tagger import TagData
 
@@ -89,3 +91,58 @@ def test_clear_removes_all_entries(tmp_path):
     cache.clear()
     assert cache.get(audio_path, 9, 9) is None
     cache.close()
+
+
+def test_concurrent_put_and_get(tmp_path):
+    """Stress-test TagCache with concurrent readers and writers."""
+    import threading
+
+    db_path = tmp_path / "concurrent_cache.db"
+    errors: list[str] = []
+
+    cache = TagCache(db_path)
+    cache.open()
+    paths = [tmp_path / f"f{i}.mp3" for i in range(20)]
+    for p in paths:
+        p.write_bytes(b"x")
+
+    def writer(pid: int) -> None:
+        try:
+            for i in range(5):
+                idx = pid * 5 + i
+                if idx < len(paths):
+                    cache.put(paths[idx], idx, idx + 100, TagData(title=f"W{pid}-{i}"))
+        except Exception as e:
+            errors.append(f"writer {pid}: {e}")
+
+    def reader(pid: int) -> None:
+        try:
+            for idx in range(len(paths)):
+                cache.get(paths[idx], idx, idx + 100)
+        except Exception as e:
+            errors.append(f"reader {pid}: {e}")
+
+    threads = [threading.Thread(target=writer, args=(i,)) for i in range(4)]
+    threads += [threading.Thread(target=reader, args=(i,)) for i in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    cache.close()
+    assert not errors, f"Concurrent errors: {errors}"
+
+
+def test_double_close_is_safe(tmp_path):
+    db_path = tmp_path / "safe.db"
+    cache = TagCache(db_path)
+    cache.open()
+    cache.close()
+    cache.close()
+
+
+def test_get_before_open_raises(tmp_path):
+    db_path = tmp_path / "never_open.db"
+    cache = TagCache(db_path)
+    with pytest.raises(RuntimeError, match="not open"):
+        cache.get(Path("f.mp3"), 1, 1)

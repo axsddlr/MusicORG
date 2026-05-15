@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PySide6.QtWidgets import QWidget
 
 from musicorg.core.tagger import TagData
 
@@ -42,7 +43,7 @@ class FileTableRow:
 class FileTableModel(QAbstractTableModel):
     """Table model for displaying audio files with their tags."""
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._rows: list[FileTableRow] = []
 

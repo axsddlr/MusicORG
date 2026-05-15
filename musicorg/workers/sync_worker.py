@@ -5,7 +5,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from musicorg.core.syncer import SyncManager
+from musicorg.errors import ErrorCode, MusicOrgError
 from musicorg.workers.base_worker import BaseWorker
+
+
+def _format_worker_error(exc: Exception) -> str:
+    if isinstance(exc, MusicOrgError):
+        return f"[{exc.code.name}] {exc.message}"
+    return str(exc)
 
 if TYPE_CHECKING:
     from musicorg.core.syncer import SyncPlan
@@ -41,7 +48,7 @@ class SyncPlanWorker(BaseWorker):
             )
             self.finished.emit(plan)
         except Exception as e:
-            self.error.emit(str(e))
+            self.error.emit(_format_worker_error(e))
 
 
 class SyncExecuteWorker(BaseWorker):
@@ -71,4 +78,4 @@ class SyncExecuteWorker(BaseWorker):
             else:
                 self.finished.emit(result)
         except Exception as e:
-            self.error.emit(str(e))
+            self.error.emit(_format_worker_error(e))

@@ -68,7 +68,10 @@ class DuplicateScanWorker(BaseWorker):
                     identity_index = TrackIdentityIndex(self._identity_db_path)
                     identity_index.open()
                 except Exception as e:
-                    _logger.warning("Failed to open identity index %s: %s — UID matching disabled", self._identity_db_path, e)
+                    _logger.warning(
+                        "Failed to open identity index %s: %s — UID matching disabled",
+                        self._identity_db_path, e,
+                    )
                     identity_index = None
 
             # Phase 2: Read tags

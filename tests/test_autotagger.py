@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from musicorg.core.autotagger import AutoTagger, MatchCandidate
+from musicorg.errors import MusicOrgError
 
 
 class _Artist:
@@ -219,7 +220,7 @@ class TestAutoTagger:
             lambda artist, album: (_ for _ in ()).throw(RuntimeError("mb down")),
         )
 
-        with pytest.raises(RuntimeError, match="MusicBrainz: mb down"):
+        with pytest.raises(MusicOrgError, match="MusicBrainz: mb down"):
             at.search_album_with_diagnostics(["dummy.mp3"])
 
     def test_search_album_with_diagnostics_retries_transient_mb_errors(self, monkeypatch):

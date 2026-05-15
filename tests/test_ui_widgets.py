@@ -155,7 +155,8 @@ class TestSelectionManager:
         
         # Test select
         paths = [Path("/test/file1.mp3"), Path("/test/file2.mp3")]
-        manager.select(paths)
+        for p in paths:
+            manager.select(p)
         selected = manager.selected_paths()
         assert len(selected) == 2
         

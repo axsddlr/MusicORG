@@ -55,9 +55,24 @@ class TagReadWorker(BaseWorker):
         cache_db_path: str = "",
     ) -> None:
         super().__init__()
-        self._paths = [Path(p) for p in paths]
-        self._sizes = list(sizes or [])
-        self._mtimes_ns = list(mtimes_ns or [])
+        seen: dict[Path, None] = {}
+        self._paths = [seen.setdefault(Path(p)) or Path(p) for p in paths]
+        dedup_count = len(paths) - len(self._paths)
+        if dedup_count and sizes is not None and mtimes_ns is not None:
+            seen_indices: dict[str, int] = {}
+            deduped_sizes: list[int] = []
+            deduped_mtimes: list[int] = []
+            for i, p in enumerate(paths):
+                key = str(p)
+                if key not in seen_indices:
+                    seen_indices[key] = len(deduped_sizes)
+                    deduped_sizes.append(sizes[i] if i < len(sizes) else 0)
+                    deduped_mtimes.append(mtimes_ns[i] if i < len(mtimes_ns) else 0)
+            self._sizes = deduped_sizes
+            self._mtimes_ns = deduped_mtimes
+        else:
+            self._sizes = list(sizes or [])
+            self._mtimes_ns = list(mtimes_ns or [])
         self._cache_db_path = cache_db_path
         self._thread_local = threading.local()
         self._thread_caches: list[TagCache] = []
@@ -101,6 +116,8 @@ class TagReadWorker(BaseWorker):
                     was_cancelled = True
                     for pending in futures:
                         pending.cancel()
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    executor = None
                     break
 
                 try:

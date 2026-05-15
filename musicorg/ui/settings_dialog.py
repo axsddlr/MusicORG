@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
-    QLineEdit, QSlider, QVBoxLayout,
+    QLineEdit, QSlider, QVBoxLayout, QWidget,
 )
 
 from musicorg.ui.widgets.dir_picker import DirPicker
@@ -29,7 +29,7 @@ class SettingsDialog(QDialog):
     def __init__(
         self,
         settings: AppSettings,
-        parent=None,
+        parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._settings = settings
