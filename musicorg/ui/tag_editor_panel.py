@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from PySide6.QtCore import QThread, Qt
 from PySide6.QtWidgets import (
@@ -24,6 +24,9 @@ from musicorg.ui.widgets.progress_bar import ProgressIndicator
 from musicorg.ui.widgets.tag_form import TagForm
 from musicorg.ui.utils import safe_disconnect_multiple
 from musicorg.workers.tag_write_worker import TagWriteFailure, TagWriteSummary, TagWriteWorker
+
+if TYPE_CHECKING:
+    from musicorg.core.library_db import LibraryDatabase
 
 
 class TagEditorPanel(QDialog):
@@ -67,6 +70,7 @@ class TagEditorPanel(QDialog):
         self._original_tags: TagData | None = None
         self._tag_manager = TagManager()
         self._cache_db_path = ""
+        self._library_db: LibraryDatabase | None = None
         self._save_worker: TagWriteWorker | None = None
         self._save_thread: QThread | None = None
 
@@ -117,6 +121,9 @@ class TagEditorPanel(QDialog):
 
     def set_cache_db_path(self, path: str) -> None:
         self._cache_db_path = path
+
+    def set_library_db(self, library_db: LibraryDatabase | None) -> None:
+        self._library_db = library_db
 
     def load_files(self, paths: list[Path]) -> None:
         """Load selected files for single-file or bulk editing."""
@@ -421,6 +428,26 @@ class TagEditorPanel(QDialog):
         return items
 
     def _read_tags_safe(self, path: Path) -> TagData:
+        if self._library_db is not None:
+            try:
+                db_tags = self._library_db.get_track_tags(path)
+                if db_tags is not None:
+                    return TagData(
+                        title=db_tags["title"],
+                        artist=db_tags["artist"],
+                        album=db_tags["album"],
+                        albumartist=db_tags["albumartist"],
+                        track=db_tags["track"],
+                        disc=db_tags["disc"],
+                        year=db_tags["year"],
+                        genre=db_tags["genre"],
+                        duration=db_tags["duration"],
+                        bitrate=db_tags["bitrate"],
+                        artwork_data=db_tags["artwork_data"],
+                        artwork_mime=db_tags["artwork_mime"],
+                    )
+            except Exception:
+                pass
         try:
             return self._tag_manager.read(path)
         except Exception:

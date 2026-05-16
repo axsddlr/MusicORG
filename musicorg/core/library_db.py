@@ -557,6 +557,43 @@ class LibraryDatabase:
         rows = self._conn_or_raise().execute(sql, params).fetchall()
         return [self._row_to_track(r) for r in rows]
 
+    def get_track_tags(self, path: str | Path) -> dict[str, Any] | None:
+        """Return a dict of all tag fields for a track (denormalized with album/artist)."""
+        row = self._conn_or_raise().execute(
+            """SELECT t.title, t.artist, a.title, ar.name,
+                      t.track_number, t.disc_number, a.year, a.genre,
+                      t.duration, t.bitrate, t.artwork_id,
+                      t.file_size, t.mtime_ns
+               FROM tracks t
+               JOIN albums a ON t.album_id = a.album_id
+               JOIN artists ar ON a.artist_id = ar.artist_id
+               WHERE t.path = ?""",
+            (_normalize_path(path),),
+        ).fetchone()
+        if row is None:
+            return None
+
+        artwork: tuple[bytes, str] | None = None
+        if row[10] is not None:
+            aw = self.get_artwork_with_mime(int(row[10]))
+            if aw is not None:
+                artwork = aw
+
+        return {
+            "title": str(row[0] or ""),
+            "artist": str(row[1] or ""),
+            "album": str(row[2] or ""),
+            "albumartist": str(row[3] or ""),
+            "track": int(row[4] or 0),
+            "disc": int(row[5] or 1),
+            "year": int(row[6] or 0),
+            "genre": str(row[7] or ""),
+            "duration": float(row[8] or 0.0),
+            "bitrate": int(row[9] or 0),
+            "artwork_data": artwork[0] if artwork else None,
+            "artwork_mime": artwork[1] if artwork else "",
+        }
+
     def remove_track(self, path: str | Path) -> None:
         normalized = _normalize_path(path)
         conn = self._conn_or_raise()

@@ -126,6 +126,7 @@ class MainWindow(QMainWindow):
         identity_path = self._settings.track_identity_db_path
         self._source_panel.set_cache_db_path(cache_path)
         self._tag_editor_panel.set_cache_db_path(cache_path)
+        self._tag_editor_panel.set_library_db(self._library_db)
         self._autotag_panel.set_cache_db_path(cache_path)
         self._artwork_downloader_panel.set_cache_db_path(cache_path)
         self._autotag_panel.set_discogs_token(self._settings.discogs_token)
