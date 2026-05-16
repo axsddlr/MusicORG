@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from musicorg.core.duplicate_finder import DuplicateGroup
+from musicorg.core.tagger import TagManager
 from musicorg.ui.widgets.dir_picker import DirPicker
 from musicorg.ui.widgets.progress_bar import ProgressIndicator
 from musicorg.ui.utils import format_file_size, safe_disconnect_multiple
@@ -94,7 +95,24 @@ class DuplicatesPanel(QWidget):
         self._tree.setAlternatingRowColors(True)
         self._tree.setRootIsDecorated(True)
         self._tree.itemChanged.connect(self._on_tree_item_changed)
+        self._tree.currentItemChanged.connect(self._on_tree_selection_changed)
         layout.addWidget(self._tree, 1)
+
+        # Detail pane: side-by-side tag comparison
+        self._detail_widget = QWidget()
+        detail_layout = QVBoxLayout(self._detail_widget)
+        detail_layout.setContentsMargins(0, 4, 0, 0)
+        detail_header = QLabel("Tag Comparison (select two files)")
+        detail_header.setObjectName("SectionHeader")
+        detail_layout.addWidget(detail_header)
+        self._detail_table = QTableWidget(0, 3)
+        self._detail_table.setHorizontalHeaderLabels(["Field", "File A", "File B"])
+        self._detail_table.horizontalHeader().setStretchLastSection(True)
+        self._detail_table.setAlternatingRowColors(True)
+        self._detail_table.setMaximumHeight(200)
+        detail_layout.addWidget(self._detail_table)
+        self._detail_widget.setVisible(False)
+        layout.addWidget(self._detail_widget)
 
         # Action row
         action_row = QHBoxLayout()
@@ -302,6 +320,88 @@ class DuplicatesPanel(QWidget):
 
     def _on_tree_item_changed(self, _item: QTreeWidgetItem, _column: int) -> None:
         self._update_selection_controls()
+
+    def _on_tree_selection_changed(self, current: QTreeWidgetItem | None, _previous: QTreeWidgetItem | None) -> None:
+        if current is None or current.parent() is None:
+            self._detail_widget.setVisible(False)
+            return
+        sibling = self._find_sibling_file(current)
+        if sibling is None:
+            self._detail_widget.setVisible(False)
+            return
+        self._update_compare_view(current, sibling)
+
+    def _find_sibling_file(self, item: QTreeWidgetItem) -> QTreeWidgetItem | None:
+        parent = item.parent()
+        if parent is None:
+            return None
+        for i in range(parent.childCount()):
+            child = parent.child(i)
+            if child is not item and child.data(0, Qt.ItemDataRole.UserRole):
+                return child
+        return None
+
+    COMPARE_FIELDS = ["Title", "Artist", "Album", "Album Artist", "Track", "Disc", "Year", "Genre", "Duration", "Bitrate", "Format", "Size"]
+
+    def _update_compare_view(self, item_a: QTreeWidgetItem, item_b: QTreeWidgetItem) -> None:
+        path_a = Path(str(item_a.data(0, Qt.ItemDataRole.UserRole) or ""))
+        path_b = Path(str(item_b.data(0, Qt.ItemDataRole.UserRole) or ""))
+        tags_a = self._read_tags_safe(path_a)
+        tags_b = self._read_tags_safe(path_b)
+        if tags_a is None or tags_b is None:
+            self._detail_widget.setVisible(False)
+            return
+
+        self._detail_table.setRowCount(0)
+        diff_color = QColor("#ffd4d4")
+
+        for field in self.COMPARE_FIELDS:
+            val_a = self._get_tag_value(tags_a, field)
+            val_b = self._get_tag_value(tags_b, field)
+            row = self._detail_table.rowCount()
+            self._detail_table.insertRow(row)
+            self._detail_table.setItem(row, 0, QTableWidgetItem(field))
+            item_a_widget = QTableWidgetItem(str(val_a))
+            item_b_widget = QTableWidgetItem(str(val_b))
+            if str(val_a) != str(val_b):
+                item_a_widget.setBackground(diff_color)
+                item_b_widget.setBackground(diff_color)
+            self._detail_table.setItem(row, 1, item_a_widget)
+            self._detail_table.setItem(row, 2, item_b_widget)
+
+        self._detail_table.resizeColumnsToContents()
+        self._detail_widget.setVisible(True)
+
+    @staticmethod
+    def _get_tag_value(tags, field: str) -> str:
+        mapping = {
+            "Title": "title", "Artist": "artist", "Album": "album",
+            "Album Artist": "albumartist", "Track": "track",
+            "Disc": "disc", "Year": "year", "Genre": "genre",
+            "Duration": "duration", "Bitrate": "bitrate",
+            "Format": lambda t: Path(getattr(t, "path", "")).suffix if hasattr(t, "path") else "",
+            "Size": lambda t: format_file_size(getattr(t, "file_size", 0) if hasattr(t, "file_size") else 0),
+        }
+        key = mapping.get(field)
+        if key is None:
+            return ""
+        if callable(key):
+            return key(tags)
+        try:
+            val = getattr(tags, key, "")
+            if field in ("Duration",):
+                return f"{float(val or 0):.1f}s"
+            if field in ("Bitrate",):
+                return f"{int(val or 0)} kbps"
+            return str(val or "")
+        except Exception:
+            return ""
+
+    def _read_tags_safe(self, path: Path):
+        try:
+            return TagManager().read(path)
+        except Exception:
+            return None
 
     def _update_selection_controls(self) -> None:
         checked_count = len(self._get_checked_paths())
