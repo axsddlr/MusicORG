@@ -22,6 +22,7 @@ from musicorg.ui.keybindings import (
     KeybindRegistry,
     create_bound_action,
 )
+from musicorg.ui.library_tools_dialog import LibraryToolsDialog
 from musicorg.ui.raw_files_panel import RawFilesPanel
 from musicorg.ui.settings_dialog import SettingsDialog
 from musicorg.ui.shortcuts_dialog import ShortcutsDialog
@@ -50,6 +51,8 @@ class MainWindow(QMainWindow):
         self._artwork_action: QAction | None = None
         self._batch_rename_action: QAction | None = None
         self._batch_tag_action: QAction | None = None
+        self._library_tools_action: QAction | None = None
+        self._tag_to_filename_action: QAction | None = None
         self._panel_selection_stats: dict[str, tuple[int, int]] = {
             "source": (0, 0),
             "raw_files": (0, 0),
@@ -242,6 +245,13 @@ class MainWindow(QMainWindow):
         self._batch_tag_action = QAction("&Batch Tag Operations...", self)
         self._batch_tag_action.triggered.connect(self._open_batch_tag_ops)
         tools_menu.addAction(self._batch_tag_action)
+        tools_menu.addSeparator()
+        self._library_tools_action = QAction("&Library Tools...", self)
+        self._library_tools_action.triggered.connect(self._open_library_tools)
+        tools_menu.addAction(self._library_tools_action)
+        self._tag_to_filename_action = QAction("Rename &Files to Match Tags...", self)
+        self._tag_to_filename_action.triggered.connect(self._open_tag_to_filename)
+        tools_menu.addAction(self._tag_to_filename_action)
         self._update_tools_availability(total=0, selected=0)
 
         help_menu = menubar.addMenu("&Help")
@@ -439,6 +449,33 @@ class MainWindow(QMainWindow):
             return
         dialog = BatchMetadataDialog(paths, self)
         dialog.exec()
+
+    def _open_library_tools(self) -> None:
+        if self._library_db is None:
+            return
+        dialog = LibraryToolsDialog(self._library_db, self)
+        dialog.exec()
+
+    def _open_tag_to_filename(self) -> None:
+        paths = self._get_selected_paths()
+        if not paths:
+            self._status_strip.show_message(
+                "Select files first to rename them to match tags.",
+                2400,
+            )
+            return
+        from musicorg.ui.batch_rename_dialog import BatchRenameDialog
+        dialog = BatchRenameDialog(paths, parent=self)
+        dialog.set_rule("$track $title")
+        if dialog.exec():
+            rename_items = dialog.get_rename_items()
+            metadata_fields = dialog.get_metadata_fields()
+            metadata_rule = dialog.rename_rule()
+            self._raw_files_panel._start_batch_rename(
+                rename_items,
+                metadata_fields=metadata_fields,
+                metadata_rule=metadata_rule,
+            )
 
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self._settings, self)
