@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS tracks (
     play_count        INTEGER DEFAULT 0,
     skip_count        INTEGER DEFAULT 0,
     last_played       INTEGER DEFAULT 0,
+    custom_tags       TEXT NOT NULL DEFAULT '{}',
     date_added        INTEGER NOT NULL DEFAULT (unixepoch()),
     date_modified     INTEGER NOT NULL DEFAULT (unixepoch()),
     artwork_id        INTEGER REFERENCES artwork(artwork_id)
@@ -173,12 +174,20 @@ class LibraryDatabase:
         conn.execute("PRAGMA synchronous=NORMAL;")
         conn.execute("PRAGMA foreign_keys=ON;")
         conn.executescript(SCHEMA_SQL)
+        self._migrate(conn)
         conn.execute(
             "INSERT OR IGNORE INTO metadata (key, value) VALUES (?, ?)",
             ("schema_version", self.SCHEMA_VERSION),
         )
         conn.commit()
         self._conn = conn
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        for col_def in ("custom_tags TEXT NOT NULL DEFAULT '{}'",):
+            try:
+                conn.execute(f"ALTER TABLE tracks ADD COLUMN {col_def}")
+            except sqlite3.OperationalError:
+                pass
 
     def close(self) -> None:
         if self._conn is None:
@@ -701,6 +710,58 @@ class LibraryDatabase:
         if row is None:
             return None
         return (bytes(row[0]), str(row[1]))
+
+    # -- custom tags --
+
+    def get_custom_tag(self, path: str | Path, key: str) -> str:
+        tags = self._get_custom_tags(path)
+        return tags.get(key, "")
+
+    def set_custom_tag(self, path: str | Path, key: str, value: str) -> None:
+        tags = self._get_custom_tags(path)
+        if value:
+            tags[key] = value
+        else:
+            tags.pop(key, None)
+        self._set_custom_tags(path, tags)
+
+    def list_custom_tag_keys(self) -> list[str]:
+        keys: set[str] = set()
+        rows = self._conn_or_raise().execute(
+            "SELECT DISTINCT custom_tags FROM tracks WHERE custom_tags != '{}'"
+        ).fetchall()
+        for row in rows:
+            try:
+                import json
+                keys.update(json.loads(str(row[0] or "{}")).keys())
+            except Exception:
+                pass
+        return sorted(keys)
+
+    def _get_custom_tags(self, path: str | Path) -> dict[str, str]:
+        normalized = _normalize_path(path)
+        row = self._conn_or_raise().execute(
+            "SELECT custom_tags FROM tracks WHERE path = ?", (normalized,)
+        ).fetchone()
+        if row is None:
+            return {}
+        try:
+            import json
+            return json.loads(str(row[0] or "{}"))
+        except Exception:
+            return {}
+
+    def _set_custom_tags(self, path: str | Path, tags: dict[str, str]) -> None:
+        import json
+        normalized = _normalize_path(path)
+        encoded = json.dumps(tags)
+        with self._lock:
+            self._conn_or_raise().execute(
+                "UPDATE tracks SET custom_tags = ?, date_modified = ? WHERE path = ?",
+                (encoded, int(time.time()), normalized),
+            )
+            if self._batch_depth == 0:
+                self._conn_or_raise().commit()
 
     # -- stats --
 

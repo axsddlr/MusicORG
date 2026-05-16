@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from PySide6.QtCore import QThread, Qt
 from PySide6.QtWidgets import (
@@ -102,11 +102,91 @@ class TagEditorPanel(QDialog):
         self._tag_form.set_enabled(False)
         layout.addWidget(self._tag_form)
 
+        # Custom tags section
+        self._custom_tags_widget = self._build_custom_tags_ui()
+        self._custom_tags_widget.setVisible(False)
+        layout.addWidget(self._custom_tags_widget)
+
         btn_layout = QHBoxLayout()
         self._save_btn = QPushButton("Save")
         self._save_btn.setProperty("role", "accent")
         self._save_btn.setEnabled(False)
         self._save_btn.clicked.connect(self._save_tags)
+
+    def _build_custom_tags_ui(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 4, 0, 0)
+        header = QLabel("Custom Tags")
+        header.setObjectName("SectionHeader")
+        layout.addWidget(header)
+        self._custom_tag_layout = QFormLayout()
+        layout.addLayout(self._custom_tag_layout)
+        tag_btn_layout = QHBoxLayout()
+        self._add_tag_btn = QPushButton("+ Add Tag")
+        self._add_tag_btn.clicked.connect(self._add_custom_tag_row)
+        tag_btn_layout.addWidget(self._add_tag_btn)
+        tag_btn_layout.addStretch()
+        layout.addLayout(tag_btn_layout)
+        self._custom_tag_rows: list[tuple[QLineEdit, QLineEdit]] = []
+        return widget
+
+    def _add_custom_tag_row(self, key: str = "", value: str = "") -> None:
+        key_input = QLineEdit(key)
+        key_input.setPlaceholderText("Tag name...")
+        val_input = QLineEdit(value)
+        val_input.setPlaceholderText("Value...")
+        row = QHBoxLayout()
+        row.addWidget(key_input, 1)
+        row.addWidget(val_input, 2)
+        remove_btn = QPushButton("×")
+        remove_btn.setMaximumWidth(24)
+        remove_btn.clicked.connect(lambda: self._remove_custom_tag_row(key_input, val_input))
+        row.addWidget(remove_btn)
+        self._custom_tag_layout.addRow(row)
+        self._custom_tag_rows.append((key_input, val_input))
+
+    def _remove_custom_tag_row(self, key_input: QLineEdit, val_input: QLineEdit) -> None:
+        for i, (k, v) in enumerate(self._custom_tag_rows):
+            if k is key_input:
+                self._custom_tag_rows.pop(i)
+                break
+        key_input.deleteLater()
+        val_input.deleteLater()
+
+    def _load_custom_tags(self, path: Path) -> None:
+        self._clear_custom_tag_rows()
+        if self._library_db is None:
+            self._custom_tags_widget.setVisible(False)
+            return
+        keys = self._library_db.list_custom_tag_keys()
+        if not keys:
+            existing = self._library_db._get_custom_tags(path)
+            for key in sorted(existing.keys()):
+                self._add_custom_tag_row(key, existing[key])
+        if self._custom_tag_rows:
+            self._custom_tags_widget.setVisible(True)
+
+    def _clear_custom_tag_rows(self) -> None:
+        for k, v in self._custom_tag_rows:
+            k.deleteLater()
+            v.deleteLater()
+        self._custom_tag_rows.clear()
+        while self._custom_tag_layout.count():
+            item = self._custom_tag_layout.takeAt(0)
+            if item and item.widget():
+                item.widget().deleteLater()
+            elif item and item.layout():
+                self._clear_layout(item.layout())
+
+    @staticmethod
+    def _clear_layout(layout: Any) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            if item and item.widget():
+                item.widget().deleteLater()
+            elif item and item.layout():
+                TagEditorPanel._clear_layout(item.layout())
         self._revert_btn = QPushButton("Revert")
         self._revert_btn.setEnabled(False)
         self._revert_btn.clicked.connect(self._revert_tags)
@@ -200,6 +280,7 @@ class TagEditorPanel(QDialog):
         QApplication.processEvents()
         self._original_tags = tags
         self._tag_form.set_tags(tags)
+        self._load_custom_tags(path)
 
     def _prev_file(self) -> None:
         if self._bulk_mode:
@@ -228,6 +309,7 @@ class TagEditorPanel(QDialog):
         tags = self._tag_form.get_tags()
         try:
             self._tag_manager.write(path, tags)
+            self._save_custom_tags(path)
             self._invalidate_cache_entries([path])
             self._original_tags = tags
             self._tag_form.mark_clean()
@@ -426,6 +508,15 @@ class TagEditorPanel(QDialog):
                 merged.artwork_mime = form_tags.artwork_mime
             items.append((path, merged))
         return items
+
+    def _save_custom_tags(self, path: Path) -> None:
+        if self._library_db is None:
+            return
+        for key_input, val_input in self._custom_tag_rows:
+            key = key_input.text().strip()
+            value = val_input.text().strip()
+            if key:
+                self._library_db.set_custom_tag(path, key, value)
 
     def _read_tags_safe(self, path: Path) -> TagData:
         if self._library_db is not None:
