@@ -155,6 +155,27 @@ class SourcePanel(QWidget):
         self._selection_hint_label.setWordWrap(True)
         layout.addWidget(self._selection_hint_label)
 
+        # Search bar
+        search_bar = QWidget()
+        search_layout = QHBoxLayout(search_bar)
+        search_layout.setContentsMargins(0, 2, 0, 2)
+        self._search_input = QLineEdit()
+        self._search_input.setPlaceholderText("Search artist, album, or track...")
+        self._search_input.textChanged.connect(self._on_search_text_changed)
+        search_layout.addWidget(self._search_input)
+        self._search_clear_btn = QPushButton("×")
+        self._search_clear_btn.setMaximumWidth(24)
+        self._search_clear_btn.clicked.connect(self._clear_search)
+        self._search_clear_btn.setVisible(False)
+        search_layout.addWidget(self._search_clear_btn)
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(300)
+        self._search_timer.timeout.connect(self._execute_search)
+        search_bar.setVisible(False)
+        layout.addWidget(search_bar)
+        self._search_bar = search_bar
+
         # Filter bar: column browser with clickable chips
         self._active_filters: dict[str, str] = {}
         filter_bar = QWidget()
@@ -448,6 +469,7 @@ class SourcePanel(QWidget):
         self._populate_artist_list()
         self._populate_library_db()
         self._rebuild_filter_chips()
+        self._search_bar.setVisible(bool(self._all_rows))
 
         current_paths = {row.path for row in self._all_rows}
         if self._previous_scan_paths:
@@ -746,6 +768,29 @@ class SourcePanel(QWidget):
         self._rebuild_filter_chips()
         self._rebuild_albums_from_filters()
 
+    def _on_search_text_changed(self, text: str) -> None:
+        self._search_clear_btn.setVisible(bool(text))
+        self._search_timer.start()
+
+    def _clear_search(self) -> None:
+        self._search_input.clear()
+        self._execute_search()
+
+    def _execute_search(self) -> None:
+        query = self._search_input.text().strip()
+        if not query:
+            self._rebuild_albums_from_filters()
+            return
+        if self._library_db is None:
+            return
+        results = self._library_db.search_tracks(query)
+        if not results:
+            self._album_browser.clear()
+            return
+        path_set = {r.path for r in results}
+        filtered = [row for row in self._all_rows if str(row.path) in path_set]
+        self._populate_artist_list(filtered_rows=filtered)
+
     def _rebuild_albums_from_filters(self) -> None:
         filtered = self._get_filtered_rows()
         if filtered is self._all_rows:
@@ -904,6 +949,9 @@ class SourcePanel(QWidget):
         self._clear_old_chips()
         self._filter_bar.setVisible(False)
         self._clear_filters_btn.setVisible(False)
+        self._search_input.clear()
+        self._search_bar.setVisible(False)
+        self._search_clear_btn.setVisible(False)
         self._artist_list_widget.clear()
         self._album_browser.clear()
         self._alphabet_bar.set_available_letters(set())
