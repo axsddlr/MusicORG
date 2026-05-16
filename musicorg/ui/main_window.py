@@ -26,6 +26,7 @@ from musicorg.ui.library_tools_dialog import LibraryToolsDialog
 from musicorg.ui.raw_files_panel import RawFilesPanel
 from musicorg.ui.settings_dialog import SettingsDialog
 from musicorg.ui.shortcuts_dialog import ShortcutsDialog
+from musicorg.ui.shortcuts_editor import ShortcutEditorDialog
 from musicorg.ui.source_panel import SourcePanel
 from musicorg.ui.sync_panel import SyncPanel
 from musicorg.ui.tag_editor_panel import TagEditorPanel
@@ -53,6 +54,7 @@ class MainWindow(QMainWindow):
         self._batch_tag_action: QAction | None = None
         self._library_tools_action: QAction | None = None
         self._tag_to_filename_action: QAction | None = None
+        self._customize_shortcuts_action: QAction | None = None
         self._panel_selection_stats: dict[str, tuple[int, int]] = {
             "source": (0, 0),
             "raw_files": (0, 0),
@@ -252,6 +254,10 @@ class MainWindow(QMainWindow):
         self._tag_to_filename_action = QAction("Rename &Files to Match Tags...", self)
         self._tag_to_filename_action.triggered.connect(self._open_tag_to_filename)
         tools_menu.addAction(self._tag_to_filename_action)
+        tools_menu.addSeparator()
+        self._customize_shortcuts_action = QAction("Customize &Shortcuts...", self)
+        self._customize_shortcuts_action.triggered.connect(self._open_shortcut_editor)
+        tools_menu.addAction(self._customize_shortcuts_action)
         self._update_tools_availability(total=0, selected=0)
 
         help_menu = menubar.addMenu("&Help")
@@ -533,6 +539,20 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         dialog.exec()
+
+    def _open_shortcut_editor(self) -> None:
+        dialog = ShortcutEditorDialog(self._keybind_registry, self._settings, self)
+        if dialog.exec():
+            old_keybinds = self._keybind_registry
+            try:
+                self._keybind_registry = KeybindRegistry(
+                    DEFAULT_KEYBINDS,
+                    self._settings.keybind_overrides,
+                )
+            except (KeybindConflictError, ValueError) as e:
+                self._keybind_registry = old_keybinds
+                QMessageBox.warning(self, "Shortcut Conflict", str(e))
+                return
 
     def _restore_state(self) -> None:
         geo = self._settings.window_geometry
