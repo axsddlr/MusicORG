@@ -13,7 +13,7 @@ _logger = logging.getLogger(__name__)
 from PySide6.QtCore import QFileSystemWatcher, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QLineEdit, QListWidgetItem,
+    QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMessageBox, QPushButton, QSplitter, QVBoxLayout, QWidget,
     QScrollArea,
 )
@@ -234,6 +234,28 @@ class SourcePanel(QWidget):
         self._artist_list_widget = ArtistListWidget()
         self._artist_list_widget.currentItemChanged.connect(self._on_artist_changed)
         artist_layout.addWidget(self._artist_list_widget)
+
+        # Playlists section
+        playlist_header = QLabel("PLAYLISTS")
+        playlist_header.setObjectName("SectionHeader")
+        playlist_header.setContentsMargins(6, 8, 6, 2)
+        artist_layout.addWidget(playlist_header)
+        self._playlist_list = QListWidget()
+        self._playlist_list.setMaximumHeight(150)
+        self._playlist_list.currentRowChanged.connect(self._on_playlist_changed)
+        artist_layout.addWidget(self._playlist_list)
+        pl_btn_layout = QHBoxLayout()
+        self._add_playlist_btn = QPushButton("+")
+        self._add_playlist_btn.setMaximumWidth(28)
+        self._add_playlist_btn.clicked.connect(self._create_playlist)
+        pl_btn_layout.addWidget(self._add_playlist_btn)
+        self._del_playlist_btn = QPushButton("-")
+        self._del_playlist_btn.setMaximumWidth(28)
+        self._del_playlist_btn.setEnabled(False)
+        self._del_playlist_btn.clicked.connect(self._delete_playlist)
+        pl_btn_layout.addWidget(self._del_playlist_btn)
+        pl_btn_layout.addStretch()
+        artist_layout.addLayout(pl_btn_layout)
 
         # Right pane: alphabet bar + album browser
         content_pane = QWidget()
@@ -470,6 +492,7 @@ class SourcePanel(QWidget):
         self._populate_library_db()
         self._rebuild_filter_chips()
         self._search_bar.setVisible(bool(self._all_rows))
+        self._refresh_playlist_list()
 
         current_paths = {row.path for row in self._all_rows}
         if self._previous_scan_paths:
@@ -791,6 +814,70 @@ class SourcePanel(QWidget):
         filtered = [row for row in self._all_rows if str(row.path) in path_set]
         self._populate_artist_list(filtered_rows=filtered)
 
+    def _refresh_playlist_list(self) -> None:
+        if self._library_db is None:
+            return
+        current = self._playlist_list.currentItem()
+        current_text = current.text() if current else None
+        self._playlist_list.blockSignals(True)
+        self._playlist_list.clear()
+        for pl in self._library_db.list_playlists():
+            item = QListWidgetItem(f"{pl['name']} ({pl['count']})")
+            item.setData(256, pl["id"])
+            self._playlist_list.addItem(item)
+            if current_text and pl["name"] == current_text.rsplit(" (", 1)[0]:
+                self._playlist_list.setCurrentItem(item)
+        self._playlist_list.blockSignals(False)
+
+    def _create_playlist(self) -> None:
+        if self._library_db is None:
+            return
+        from PySide6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(self, "New Playlist", "Playlist name:")
+        if ok and name:
+            self._library_db.create_playlist(name.strip())
+            self._refresh_playlist_list()
+
+    def _delete_playlist(self) -> None:
+        if self._library_db is None:
+            return
+        item = self._playlist_list.currentItem()
+        if item is None:
+            return
+        pl_id = item.data(256)
+        name = item.text().rsplit(" (", 1)[0]
+        reply = QMessageBox.question(
+            self, "Delete Playlist",
+            f"Delete '{name}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._library_db.delete_playlist(pl_id)
+            self._refresh_playlist_list()
+
+    def _on_playlist_changed(self, row: int) -> None:
+        self._del_playlist_btn.setEnabled(row >= 0)
+        if row < 0 or self._library_db is None:
+            return
+        item = self._playlist_list.item(row)
+        if item is None:
+            return
+        pl_id = item.data(256)
+        paths = self._library_db.get_playlist_tracks(pl_id)
+        path_set = set(paths)
+        filtered = [r for r in self._all_rows if str(r.path) in path_set]
+        ordered = []
+        seen: set[str] = set()
+        for p in paths:
+            for r in filtered:
+                if str(r.path) == p and p not in seen:
+                    ordered.append(r)
+                    seen.add(p)
+        for r in filtered:
+            if str(r.path) not in seen:
+                ordered.append(r)
+        self._populate_artist_list(filtered_rows=ordered)
+
     def _rebuild_albums_from_filters(self) -> None:
         filtered = self._get_filtered_rows()
         if filtered is self._all_rows:
@@ -952,6 +1039,8 @@ class SourcePanel(QWidget):
         self._search_input.clear()
         self._search_bar.setVisible(False)
         self._search_clear_btn.setVisible(False)
+        self._playlist_list.clear()
+        self._del_playlist_btn.setEnabled(False)
         self._artist_list_widget.clear()
         self._album_browser.clear()
         self._alphabet_bar.set_available_letters(set())

@@ -87,6 +87,22 @@ CREATE INDEX IF NOT EXISTS idx_tracks_path ON tracks(path);
 CREATE INDEX IF NOT EXISTS idx_tracks_sha1 ON tracks(content_sha1);
 CREATE INDEX IF NOT EXISTS idx_albums_artist_id ON albums(artist_id);
 CREATE INDEX IF NOT EXISTS idx_artwork_sha256 ON artwork(sha256);
+
+CREATE TABLE IF NOT EXISTS playlists (
+    playlist_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL UNIQUE,
+    is_smart    INTEGER NOT NULL DEFAULT 0,
+    rule_json   TEXT NOT NULL DEFAULT '',
+    created_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at  INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+CREATE TABLE IF NOT EXISTS playlist_tracks (
+    playlist_id INTEGER NOT NULL REFERENCES playlists(playlist_id) ON DELETE CASCADE,
+    track_path  TEXT NOT NULL,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (playlist_id, track_path)
+);
 """
 
 
@@ -186,6 +202,14 @@ class LibraryDatabase:
         for col_def in ("custom_tags TEXT NOT NULL DEFAULT '{}'",):
             try:
                 conn.execute(f"ALTER TABLE tracks ADD COLUMN {col_def}")
+            except sqlite3.OperationalError:
+                pass
+        for table_sql in (
+            "CREATE TABLE IF NOT EXISTS playlists (playlist_id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, is_smart INTEGER NOT NULL DEFAULT 0, rule_json TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL DEFAULT (unixepoch()), updated_at INTEGER NOT NULL DEFAULT (unixepoch()))",
+            "CREATE TABLE IF NOT EXISTS playlist_tracks (playlist_id INTEGER NOT NULL REFERENCES playlists(playlist_id) ON DELETE CASCADE, track_path TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (playlist_id, track_path))",
+        ):
+            try:
+                conn.execute(table_sql)
             except sqlite3.OperationalError:
                 pass
 
@@ -806,6 +830,104 @@ class LibraryDatabase:
             (limit,),
         ).fetchall()
         return [self._row_to_track(r) for r in rows]
+
+    # -- playlists --
+
+    def create_playlist(self, name: str, *, is_smart: bool = False, rule_json: str = "") -> int:
+        conn = self._conn_or_raise()
+        now = int(time.time())
+        with self._lock:
+            conn.execute(
+                "INSERT OR IGNORE INTO playlists (name, is_smart, rule_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                (name, 1 if is_smart else 0, rule_json, now, now),
+            )
+            if self._batch_depth == 0:
+                conn.commit()
+            row = conn.execute("SELECT playlist_id FROM playlists WHERE name = ?", (name,)).fetchone()
+            return int(row[0]) if row else -1
+
+    def delete_playlist(self, playlist_id: int) -> None:
+        with self._lock:
+            self._conn_or_raise().execute("DELETE FROM playlist_tracks WHERE playlist_id = ?", (playlist_id,))
+            self._conn_or_raise().execute("DELETE FROM playlists WHERE playlist_id = ?", (playlist_id,))
+            if self._batch_depth == 0:
+                self._conn_or_raise().commit()
+
+    def rename_playlist(self, playlist_id: int, new_name: str) -> None:
+        with self._lock:
+            self._conn_or_raise().execute(
+                "UPDATE playlists SET name = ?, updated_at = ? WHERE playlist_id = ?",
+                (new_name, int(time.time()), playlist_id),
+            )
+            if self._batch_depth == 0:
+                self._conn_or_raise().commit()
+
+    def list_playlists(self) -> list[dict[str, Any]]:
+        rows = self._conn_or_raise().execute(
+            "SELECT playlist_id, name, is_smart, rule_json, (SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id = p.playlist_id) FROM playlists p ORDER BY name"
+        ).fetchall()
+        return [
+            {
+                "id": int(r[0]), "name": str(r[1]),
+                "is_smart": bool(r[2]), "rule": str(r[3] or ""),
+                "count": int(r[4] or 0),
+            }
+            for r in rows
+        ]
+
+    def add_track_to_playlist(self, playlist_id: int, track_path: str) -> None:
+        normalized = _normalize_path(track_path)
+        with self._lock:
+            max_order = self._conn_or_raise().execute(
+                "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM playlist_tracks WHERE playlist_id = ?",
+                (playlist_id,),
+            ).fetchone()[0]
+            self._conn_or_raise().execute(
+                "INSERT OR IGNORE INTO playlist_tracks (playlist_id, track_path, sort_order) VALUES (?, ?, ?)",
+                (playlist_id, normalized, int(max_order)),
+            )
+            if self._batch_depth == 0:
+                self._conn_or_raise().commit()
+
+    def remove_track_from_playlist(self, playlist_id: int, track_path: str) -> None:
+        normalized = _normalize_path(track_path)
+        with self._lock:
+            self._conn_or_raise().execute(
+                "DELETE FROM playlist_tracks WHERE playlist_id = ? AND track_path = ?",
+                (playlist_id, normalized),
+            )
+            if self._batch_depth == 0:
+                self._conn_or_raise().commit()
+
+    def get_playlist_tracks(self, playlist_id: int) -> list[str]:
+        rows = self._conn_or_raise().execute(
+            "SELECT track_path FROM playlist_tracks WHERE playlist_id = ? ORDER BY sort_order",
+            (playlist_id,),
+        ).fetchall()
+        return [str(r[0]) for r in rows]
+
+    def get_playlist_track_records(self, playlist_id: int) -> list[TrackRecord]:
+        rows = self._conn_or_raise().execute(
+            """SELECT t.track_id, t.album_id, t.path, t.title, t.artist,
+                      t.track_number, t.disc_number, t.duration, t.bitrate, t.format,
+                      t.file_size, t.mtime_ns, t.content_sha1,
+                      t.rating, t.play_count,
+                      t.date_added, t.date_modified, t.artwork_id
+               FROM tracks t
+               JOIN playlist_tracks pt ON t.path = pt.track_path
+               WHERE pt.playlist_id = ?
+               ORDER BY pt.sort_order""",
+            (playlist_id,),
+        ).fetchall()
+        return [self._row_to_track(r) for r in rows]
+
+    def clear_playlist(self, playlist_id: int) -> None:
+        with self._lock:
+            self._conn_or_raise().execute(
+                "DELETE FROM playlist_tracks WHERE playlist_id = ?", (playlist_id,)
+            )
+            if self._batch_depth == 0:
+                self._conn_or_raise().commit()
 
     # -- helpers --
 
