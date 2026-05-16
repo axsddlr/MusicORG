@@ -642,6 +642,29 @@ class LibraryDatabase:
             return None
         return (bytes(row[0]), str(row[1]))
 
+    def get_artwork_for_track(self, path: str | Path) -> tuple[bytes, str] | None:
+        row = self._conn_or_raise().execute(
+            """SELECT a.data, a.mime FROM artwork a
+               JOIN tracks t ON t.artwork_id = a.artwork_id
+               WHERE t.path = ? LIMIT 1""",
+            (_normalize_path(path),),
+        ).fetchone()
+        if row is None:
+            return None
+        return (bytes(row[0]), str(row[1]))
+
+    def get_artwork_for_album(self, album_id: int) -> tuple[bytes, str] | None:
+        row = self._conn_or_raise().execute(
+            """SELECT a.data, a.mime FROM artwork a
+               JOIN tracks t ON t.artwork_id = a.artwork_id
+               WHERE t.album_id = ? AND a.data IS NOT NULL
+               LIMIT 1""",
+            (album_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return (bytes(row[0]), str(row[1]))
+
     # -- stats --
 
     def total_tracks(self) -> int:

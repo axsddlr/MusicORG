@@ -455,8 +455,15 @@ class SourcePanel(QWidget):
                     artwork_data=tags.artwork_data,
                     artwork_mime=tags.artwork_mime,
                 )
+                tags.artwork_data = None
+                tags.artwork_mime = ""
         finally:
             lib.end_batch()
+
+    def get_track_artwork(self, path: str | Path) -> tuple[bytes, str] | None:
+        if self._library_db is None:
+            return None
+        return self._library_db.get_artwork_for_track(path)
 
     @staticmethod
     def _coerce_tag_batch(batch_payload: object) -> list[TagBatchEntry]:
