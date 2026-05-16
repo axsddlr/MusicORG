@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QGridLayout, QHBoxLayout, QMainWindow, QStackedWidget, QVBoxLayout, QWidget,
 )
 
+from musicorg.core.library_db import LibraryDatabase
 from musicorg.ui.autotag_panel import AutoTagPanel
 from musicorg.ui.artwork_downloader_panel import ArtworkDownloaderPanel
 from musicorg.ui.duplicates_panel import DuplicatesPanel
@@ -60,6 +61,7 @@ class MainWindow(QMainWindow):
             self._settings.keybind_overrides = {}
             self._keybind_registry = KeybindRegistry(DEFAULT_KEYBINDS)
 
+        self._library_db: LibraryDatabase | None = None
         self.setWindowTitle("MusicOrg")
         self.setMinimumSize(900, 600)
         self.resize(1100, 750)
@@ -69,6 +71,24 @@ class MainWindow(QMainWindow):
         self._setup_menu()
         self._connect_panels()
         self._restore_state()
+
+    def _open_library_db(self) -> LibraryDatabase | None:
+        try:
+            lib = LibraryDatabase(self._settings.library_db_path)
+            lib.open()
+            return lib
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("Failed to open library database: %s", e)
+            return None
+
+    def closeEvent(self, event: object) -> None:
+        if self._library_db is not None:
+            try:
+                self._library_db.close()
+            except Exception:
+                pass
+        super().closeEvent(event)
 
     def _setup_layout(self) -> None:
         central = QWidget()
@@ -88,7 +108,9 @@ class MainWindow(QMainWindow):
         content_row.addWidget(self._sidebar)
 
         self._stack = QStackedWidget()
+        self._library_db = self._open_library_db()
         self._source_panel = SourcePanel()
+        self._source_panel.set_library_db(self._library_db)
         self._source_panel.set_album_artwork_selection_mode(
             self._settings.album_artwork_selection_mode
         )

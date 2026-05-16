@@ -71,6 +71,10 @@ class AppSettings:
     def track_identity_db_path(self) -> str:
         return str(self.app_data_dir / "track_identity.db")
 
+    @property
+    def library_db_path(self) -> str:
+        return str(self.app_data_dir / "library.db")
+
     # -- backdrop opacity --
 
     @property

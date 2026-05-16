@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
     QMessageBox, QPushButton, QSplitter, QVBoxLayout, QWidget,
 )
 
+from musicorg.core.library_db import LibraryDatabase
+from musicorg.core.scanner import LibraryScanner
 from musicorg.core.tagger import TagData
 from musicorg.ui.keybindings import (
     AlbumArtworkSelectionMode,
@@ -71,11 +73,24 @@ class SourcePanel(QWidget):
         self._auto_scan_timer.setInterval(400)
         self._auto_scan_timer.timeout.connect(self._trigger_auto_scan)
         self._previous_scan_paths: set[Path] = set()
+        self._library_db: LibraryDatabase | None = None
 
         self._selection_manager = SelectionManager(self)
         self._selection_manager.selection_changed.connect(self._on_selection_changed)
 
         self._setup_ui()
+
+    def set_library_db(self, library_db: LibraryDatabase | None) -> None:
+        self._library_db = library_db
+
+    def get_library_db(self) -> LibraryDatabase | None:
+        return self._library_db
+
+    def library_scanner(self, db: LibraryDatabase | None = None) -> LibraryScanner | None:
+        lib = db or self._library_db
+        if lib is not None and self._last_scanned_path:
+            return LibraryScanner(self._last_scanned_path, lib)
+        return None
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -381,6 +396,7 @@ class SourcePanel(QWidget):
         # list refresh (which reuses cached thumbnails).
         self._strip_redundant_artwork()
         self._populate_artist_list()
+        self._populate_library_db()
 
         current_paths = {row.path for row in self._all_rows}
         if self._previous_scan_paths:
@@ -414,6 +430,33 @@ class SourcePanel(QWidget):
         self._last_scanned_path = self._scan_target_path
         self._emit_selection_stats()
         self._run_pending_auto_scan()
+
+    def _populate_library_db(self) -> None:
+        lib = self._library_db
+        if lib is None or not self._all_rows:
+            return
+        try:
+            lib.begin_batch()
+            for row in self._all_rows:
+                tags = row.tags
+                lib.upsert_track(
+                    path=row.path,
+                    title=tags.title,
+                    artist=tags.artist,
+                    album=tags.album,
+                    albumartist=tags.albumartist,
+                    track_number=tags.track,
+                    disc_number=tags.disc,
+                    year=tags.year,
+                    genre=tags.genre,
+                    duration=tags.duration,
+                    bitrate=tags.bitrate,
+                    file_size=row.size,
+                    artwork_data=tags.artwork_data,
+                    artwork_mime=tags.artwork_mime,
+                )
+        finally:
+            lib.end_batch()
 
     @staticmethod
     def _coerce_tag_batch(batch_payload: object) -> list[TagBatchEntry]:
