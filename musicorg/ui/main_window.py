@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 from musicorg.core.library_db import LibraryDatabase
 from musicorg.ui.autotag_panel import AutoTagPanel
 from musicorg.ui.artwork_downloader_panel import ArtworkDownloaderPanel
+from musicorg.ui.batch_metadata_dialog import BatchMetadataDialog
 from musicorg.ui.duplicates_panel import DuplicatesPanel
 from musicorg.ui.keybindings import (
     DEFAULT_KEYBINDS,
@@ -48,6 +49,7 @@ class MainWindow(QMainWindow):
         self._autotag_action: QAction | None = None
         self._artwork_action: QAction | None = None
         self._batch_rename_action: QAction | None = None
+        self._batch_tag_action: QAction | None = None
         self._panel_selection_stats: dict[str, tuple[int, int]] = {
             "source": (0, 0),
             "raw_files": (0, 0),
@@ -235,6 +237,11 @@ class MainWindow(QMainWindow):
         self._batch_rename_action = QAction("&Batch Rename Files...", self)
         self._batch_rename_action.triggered.connect(self._open_batch_rename_from_selection)
         tools_menu.addAction(self._batch_rename_action)
+
+        tools_menu.addSeparator()
+        self._batch_tag_action = QAction("&Batch Tag Operations...", self)
+        self._batch_tag_action.triggered.connect(self._open_batch_tag_ops)
+        tools_menu.addAction(self._batch_tag_action)
         self._update_tools_availability(total=0, selected=0)
 
         help_menu = menubar.addMenu("&Help")
@@ -420,6 +427,18 @@ class MainWindow(QMainWindow):
             )
             return
         self._raw_files_panel.open_batch_rename_for_selection()
+
+    def _open_batch_tag_ops(self) -> None:
+        """Open batch tag operations dialog from current selection."""
+        paths = self._get_selected_paths()
+        if not paths:
+            self._status_strip.show_message(
+                "Select files first to use batch tag operations.",
+                2400,
+            )
+            return
+        dialog = BatchMetadataDialog(paths, self)
+        dialog.exec()
 
     def _open_settings(self) -> None:
         dialog = SettingsDialog(self._settings, self)
