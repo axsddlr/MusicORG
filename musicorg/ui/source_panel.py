@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from collections import Counter
+import logging
+import os
 from pathlib import Path
 from typing import cast
 
-from PySide6.QtCore import QThread, QTimer, Qt, Signal
+_logger = logging.getLogger(__name__)
+
+from PySide6.QtCore import QFileSystemWatcher, QThread, QTimer, Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QLineEdit, QListWidgetItem,
@@ -16,7 +20,7 @@ from PySide6.QtWidgets import (
 
 from musicorg.core.library_db import LibraryDatabase
 from musicorg.core.scanner import LibraryScanner
-from musicorg.core.tagger import TagData
+from musicorg.core.tagger import TagData, TagManager
 from musicorg.ui.keybindings import (
     AlbumArtworkSelectionMode,
     DEFAULT_ALBUM_ARTWORK_SELECTION_MODE,
@@ -76,6 +80,14 @@ class SourcePanel(QWidget):
         self._auto_scan_timer.timeout.connect(self._trigger_auto_scan)
         self._previous_scan_paths: set[Path] = set()
         self._library_db: LibraryDatabase | None = None
+        self._tag_manager = TagManager()
+
+        self._fs_watcher = QFileSystemWatcher(self)
+        self._fs_watcher.directoryChanged.connect(self._on_watched_dir_changed)
+        self._sweep_timer = QTimer(self)
+        self._sweep_timer.setSingleShot(True)
+        self._sweep_timer.setInterval(2000)
+        self._sweep_timer.timeout.connect(self._run_auto_sweep)
 
         self._selection_manager = SelectionManager(self)
         self._selection_manager.selection_changed.connect(self._on_selection_changed)
@@ -468,6 +480,7 @@ class SourcePanel(QWidget):
         self._scan_in_progress = False
         self._last_scanned_path = self._scan_target_path
         self._emit_selection_stats()
+        self._setup_folder_watch(self._last_scanned_path)
         self._run_pending_auto_scan()
 
     def _populate_library_db(self) -> None:
@@ -503,6 +516,66 @@ class SourcePanel(QWidget):
         if self._library_db is None:
             return None
         return self._library_db.get_artwork_for_track(path)
+
+    def _setup_folder_watch(self, directory: str) -> None:
+        if not directory or not Path(directory).is_dir():
+            return
+        existing = self._fs_watcher.directories()
+        if existing:
+            self._fs_watcher.removePaths(existing)
+        try:
+            self._fs_watcher.addPath(directory)
+            root = Path(directory)
+            for dirpath, dirnames, _ in os.walk(str(root)):
+                for d in dirnames:
+                    try:
+                        self._fs_watcher.addPath(str(Path(dirpath) / d))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    def _on_watched_dir_changed(self, _path: str) -> None:
+        self._sweep_timer.start()
+
+    def _run_auto_sweep(self) -> None:
+        if not self._last_scanned_path or not Path(self._last_scanned_path).is_dir():
+            return
+        try:
+            from musicorg.core.scanner import FileScanner
+            afs = FileScanner(self._last_scanned_path).scan()
+            current_paths = {str(af.path) for af in afs}
+            if self._library_db is not None:
+                removed = self._library_db.remove_missing_tracks(current_paths)
+                if removed:
+                    removed_count = len(removed)
+                else:
+                    removed_count = 0
+            else:
+                removed_count = 0
+            known = set(self._all_rows)
+            new_files = [af for af in afs if af.path not in known]
+            if not new_files and removed_count == 0:
+                return
+            if new_files:
+                for af in new_files:
+                    tags = self._tag_manager.read(af.path)
+                    row = FileTableRow(path=af.path, tags=tags, size=af.size)
+                    self._all_rows.append(row)
+                    self._merge_into_library_index([row])
+                if self._library_db is not None:
+                    self._populate_library_db()
+            new_paths = {row.path for row in self._all_rows}
+            self._previous_scan_paths = new_paths
+            self._strip_redundant_artwork()
+            self._populate_artist_list()
+            self._rebuild_filter_chips()
+            if new_files:
+                self._progress.finish(
+                    f"Auto-sweep: {len(new_files)} new, {removed_count} removed"
+                )
+        except Exception as e:
+            _logger.debug("Auto-sweep failed: %s", e)
 
     @staticmethod
     def _coerce_tag_batch(batch_payload: object) -> list[TagBatchEntry]:
