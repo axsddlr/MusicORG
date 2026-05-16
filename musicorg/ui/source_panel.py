@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 from typing import cast
 
@@ -10,6 +11,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QLineEdit, QListWidgetItem,
     QMessageBox, QPushButton, QSplitter, QVBoxLayout, QWidget,
+    QScrollArea,
 )
 
 from musicorg.core.library_db import LibraryDatabase
@@ -140,6 +142,42 @@ class SourcePanel(QWidget):
         self._selection_hint_label.setObjectName("StatusMuted")
         self._selection_hint_label.setWordWrap(True)
         layout.addWidget(self._selection_hint_label)
+
+        # Filter bar: column browser with clickable chips
+        self._active_filters: dict[str, str] = {}
+        filter_bar = QWidget()
+        filter_bar.setObjectName("FilterBar")
+        filter_layout = QHBoxLayout(filter_bar)
+        filter_layout.setContentsMargins(0, 2, 0, 2)
+        filter_layout.setSpacing(4)
+
+        filter_layout.addWidget(QLabel("Browse:"))
+        self._filter_type_combo = QComboBox()
+        self._filter_type_combo.addItems(["Genre", "Year", "Format"])
+        self._filter_type_combo.currentTextChanged.connect(self._rebuild_filter_chips)
+        filter_layout.addWidget(self._filter_type_combo)
+
+        self._filter_scroll = QScrollArea()
+        self._filter_scroll.setWidgetResizable(True)
+        self._filter_scroll.setMaximumHeight(32)
+        self._filter_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._filter_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._filter_chip_container = QWidget()
+        self._filter_chip_layout = QHBoxLayout(self._filter_chip_container)
+        self._filter_chip_layout.setContentsMargins(0, 0, 0, 0)
+        self._filter_chip_layout.setSpacing(4)
+        self._filter_scroll.setWidget(self._filter_chip_container)
+        filter_layout.addWidget(self._filter_scroll, 1)
+
+        self._clear_filters_btn = QPushButton("Clear")
+        self._clear_filters_btn.setMaximumWidth(60)
+        self._clear_filters_btn.clicked.connect(self._clear_filters)
+        self._clear_filters_btn.setVisible(False)
+        filter_layout.addWidget(self._clear_filters_btn)
+
+        filter_bar.setVisible(False)
+        layout.addWidget(filter_bar)
+        self._filter_bar = filter_bar
 
         # Browser layout: artists sidebar + album browser
         browser_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -397,6 +435,7 @@ class SourcePanel(QWidget):
         self._strip_redundant_artwork()
         self._populate_artist_list()
         self._populate_library_db()
+        self._rebuild_filter_chips()
 
         current_paths = {row.path for row in self._all_rows}
         if self._previous_scan_paths:
@@ -547,38 +586,128 @@ class SourcePanel(QWidget):
             )
 
     def _strip_redundant_artwork(self) -> None:
-        for albums in self._library_index.values():
-            for album_rows in albums.values():
-                kept_artwork = False
-                for row in album_rows:
-                    if not row.tags.artwork_data:
-                        continue
-                    if not kept_artwork:
-                        kept_artwork = True
-                        continue
-                    row.tags.artwork_data = None
-                    row.tags.artwork_mime = ""
+        """Null artwork on all but first track per album to save memory."""
+        seen_albums: set[tuple[str, str]] = set()
+        for row in self._all_rows:
+            t = row.tags
+            key = (t.albumartist or t.artist, t.album)
+            if key in seen_albums:
+                t.artwork_data = None
+                t.artwork_mime = ""
+            else:
+                seen_albums.add(key)
 
-    def _populate_artist_list(self) -> None:
+    def _get_filtered_rows(self) -> list[FileTableRow]:
+        if not self._active_filters:
+            return self._all_rows
+        filtered: list[FileTableRow] = []
+        for row in self._all_rows:
+            tags = row.tags
+            match = True
+            for key, value in self._active_filters.items():
+                if key == "Genre":
+                    if tags.genre.lower() != value.lower():
+                        match = False
+                elif key == "Year":
+                    yr = str(tags.year)
+                    if not (value == yr or (value.endswith("s") and yr.startswith(value[:3]))):
+                        match = False
+                elif key == "Format":
+                    if row.path.suffix.lower().lstrip(".") != value.lower():
+                        match = False
+            if match:
+                filtered.append(row)
+        return filtered
+
+    def _rebuild_filter_chips(self) -> None:
+        self._clear_old_chips()
+        filter_type = self._filter_type_combo.currentText()
+
+        counter: Counter[str] = Counter()
+        for row in self._all_rows:
+            if filter_type == "Genre":
+                val = (row.tags.genre or "").strip()
+            elif filter_type == "Year":
+                yr = row.tags.year
+                val = str(yr) if yr else ""
+            elif filter_type == "Format":
+                val = row.path.suffix.lower().lstrip(".")
+            else:
+                continue
+            if val:
+                counter[val] += 1
+
+        active_val = self._active_filters.get(filter_type, "")
+        for value in sorted(counter, key=lambda v: -counter[v])[:30]:
+            count = counter[value]
+            btn = QPushButton(f"{value} ({count})")
+            btn.setFlat(True)
+            btn.setMaximumHeight(26)
+            if value == active_val:
+                btn.setObjectName("FilterChipActive")
+            else:
+                btn.setObjectName("FilterChip")
+            btn.clicked.connect(lambda checked=False, v=value: self._toggle_filter(filter_type, v))
+            self._filter_chip_layout.addWidget(btn)
+
+        self._filter_bar.setVisible(bool(counter))
+        self._clear_filters_btn.setVisible(bool(self._active_filters))
+
+    def _clear_old_chips(self) -> None:
+        while self._filter_chip_layout.count():
+            item = self._filter_chip_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+    def _toggle_filter(self, filter_type: str, value: str) -> None:
+        if self._active_filters.get(filter_type) == value:
+            del self._active_filters[filter_type]
+        else:
+            self._active_filters[filter_type] = value
+        self._rebuild_filter_chips()
+        self._rebuild_albums_from_filters()
+
+    def _clear_filters(self) -> None:
+        self._active_filters.clear()
+        self._rebuild_filter_chips()
+        self._rebuild_albums_from_filters()
+
+    def _rebuild_albums_from_filters(self) -> None:
+        filtered = self._get_filtered_rows()
+        if filtered is self._all_rows:
+            self._populate_artist_list()
+        else:
+            self._populate_artist_list(filtered_rows=filtered)
+
+    def _populate_artist_list(self, filtered_rows: list[FileTableRow] | None = None) -> None:
         _UNKNOWN = "Unknown Artist"
-        sorted_artists = sorted(self._library_index)
-        if _UNKNOWN in self._library_index:
+        if filtered_rows is not None:
+            index: dict[str, dict[str, list[FileTableRow]]] = {}
+            for row in filtered_rows:
+                t = row.tags
+                artist = t.albumartist or t.artist or _UNKNOWN
+                album = t.album or "Unknown Album"
+                index.setdefault(artist, {}).setdefault(album, []).append(row)
+            source = index
+        else:
+            source = self._library_index
+        sorted_artists = sorted(source)
+        if _UNKNOWN in source:
             sorted_artists.remove(_UNKNOWN)
             sorted_artists.insert(0, _UNKNOWN)
         self._all_artists = sorted_artists
         for artist in self._all_artists:
-            albums = self._library_index[artist]
+            albums = source[artist]
             album_count = len(albums)
             existing = self._artist_meta.get(artist)
             if existing is not None:
-                # Reuse cached thumbnail, just update album count
                 self._artist_meta[artist] = (existing[0], album_count)
             else:
                 self._artist_meta[artist] = (
                     self._build_artist_thumbnail(albums),
                     album_count,
                 )
-        # Remove stale entries for artists no longer in the index
         stale = self._artist_meta.keys() - set(self._all_artists)
         for key in stale:
             del self._artist_meta[key]
@@ -698,6 +827,10 @@ class SourcePanel(QWidget):
         self._artist_meta = {}
         self._active_artist = ""
         self._first_batch_rendered = False
+        self._active_filters.clear()
+        self._clear_old_chips()
+        self._filter_bar.setVisible(False)
+        self._clear_filters_btn.setVisible(False)
         self._artist_list_widget.clear()
         self._album_browser.clear()
         self._alphabet_bar.set_available_letters(set())
