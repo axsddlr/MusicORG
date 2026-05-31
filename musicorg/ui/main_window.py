@@ -23,13 +23,16 @@ from musicorg.ui.keybindings import (
     create_bound_action,
 )
 from musicorg.ui.library_tools_dialog import LibraryToolsDialog
+from musicorg.ui.quicktag_panel import QuickTagPanel
 from musicorg.ui.raw_files_panel import RawFilesPanel
 from musicorg.ui.settings_dialog import SettingsDialog
 from musicorg.ui.shortcuts_dialog import ShortcutsDialog
 from musicorg.ui.shortcuts_editor import ShortcutEditorDialog
 from musicorg.ui.source_panel import SourcePanel
+from musicorg.ui.spotify_features_panel import SpotifyFeaturesPanel
 from musicorg.ui.sync_panel import SyncPanel
 from musicorg.ui.tag_editor_panel import TagEditorPanel
+from musicorg.ui.template_rename_dialog import TemplateRenameDialog
 from musicorg.ui.theme_dialog import ThemeDialog
 from musicorg.ui.widgets.artwork_backdrop import ArtworkBackdrop
 from musicorg.ui.widgets.sidebar import SidebarNav
@@ -52,6 +55,9 @@ class MainWindow(QMainWindow):
         self._artwork_action: QAction | None = None
         self._batch_rename_action: QAction | None = None
         self._batch_tag_action: QAction | None = None
+        self._quicktag_action: QAction | None = None
+        self._spotify_features_action: QAction | None = None
+        self._template_rename_action: QAction | None = None
         self._library_tools_action: QAction | None = None
         self._tag_to_filename_action: QAction | None = None
         self._customize_shortcuts_action: QAction | None = None
@@ -128,6 +134,8 @@ class MainWindow(QMainWindow):
         self._tag_editor_panel = TagEditorPanel(self)
         self._autotag_panel = AutoTagPanel(self)
         self._artwork_downloader_panel = ArtworkDownloaderPanel(self)
+        self._quicktag_panel = QuickTagPanel(self)
+        self._spotify_features_panel = SpotifyFeaturesPanel(self)
 
         cache_path = self._settings.tag_cache_db_path
         identity_path = self._settings.track_identity_db_path
@@ -243,6 +251,35 @@ class MainWindow(QMainWindow):
         self._batch_rename_action.triggered.connect(self._open_batch_rename_from_selection)
         tools_menu.addAction(self._batch_rename_action)
 
+        self._template_rename_action = create_bound_action(
+            parent=self,
+            text="&Template Rename...",
+            keybind_id="tools.open_template_rename",
+            registry=self._keybind_registry,
+            handler=self._open_template_rename_from_selection,
+        )
+        tools_menu.addAction(self._template_rename_action)
+
+        tools_menu.addSeparator()
+
+        self._quicktag_action = create_bound_action(
+            parent=self,
+            text="&Quick Tag",
+            keybind_id="tools.open_quicktag",
+            registry=self._keybind_registry,
+            handler=self._open_quicktag_from_selection,
+        )
+        tools_menu.addAction(self._quicktag_action)
+
+        self._spotify_features_action = create_bound_action(
+            parent=self,
+            text="Spotify &Audio Features",
+            keybind_id="tools.open_spotify_features",
+            registry=self._keybind_registry,
+            handler=self._open_spotify_features_from_selection,
+        )
+        tools_menu.addAction(self._spotify_features_action)
+
         tools_menu.addSeparator()
         self._batch_tag_action = QAction("&Batch Tag Operations...", self)
         self._batch_tag_action.triggered.connect(self._open_batch_tag_ops)
@@ -306,6 +343,12 @@ class MainWindow(QMainWindow):
         self._refresh_tools_and_status_for_active_panel()
         self._autotag_panel.tags_applied.connect(
             lambda: self._status_strip.show_message("Tags applied - re-scan to see changes")
+        )
+        self._quicktag_panel.tags_applied.connect(
+            lambda: self._status_strip.show_message("Quick tags applied")
+        )
+        self._spotify_features_panel.tags_applied.connect(
+            lambda: self._status_strip.show_message("Audio features applied")
         )
 
     def _on_library_selection_stats_changed(
@@ -376,6 +419,12 @@ class MainWindow(QMainWindow):
             self._artwork_action.setEnabled(enabled)
         if self._batch_rename_action is not None:
             self._batch_rename_action.setEnabled(enabled and active_name == "raw_files")
+        if self._quicktag_action is not None:
+            self._quicktag_action.setEnabled(enabled)
+        if self._spotify_features_action is not None:
+            self._spotify_features_action.setEnabled(enabled)
+        if self._template_rename_action is not None:
+            self._template_rename_action.setEnabled(enabled)
 
     def _send_to_editor(self, paths: list[Path]) -> None:
         if paths:
@@ -416,6 +465,60 @@ class MainWindow(QMainWindow):
             )
             return
         self._send_to_autotag(selected_paths)
+
+    def _open_quicktag_from_selection(self) -> None:
+        selected_paths = self._selected_paths_for_tools()
+        if not selected_paths:
+            panel_label = self._active_selection_panel_label()
+            self._status_strip.show_message(
+                f"Select files in {panel_label} to open Quick Tag",
+                2400,
+            )
+            return
+        self._quicktag_panel.load_files(selected_paths)
+        self._quicktag_panel.show()
+        self._quicktag_panel.raise_()
+
+    def _open_spotify_features_from_selection(self) -> None:
+        selected_paths = self._selected_paths_for_tools()
+        if not selected_paths:
+            panel_label = self._active_selection_panel_label()
+            self._status_strip.show_message(
+                f"Select files in {panel_label} to open Spotify Audio Features",
+                2400,
+            )
+            return
+        self._spotify_features_panel.load_files(selected_paths)
+        self._spotify_features_panel.show()
+        self._spotify_features_panel.raise_()
+
+    def _open_template_rename_from_selection(self) -> None:
+        selected_paths = self._selected_paths_for_tools()
+        if not selected_paths:
+            panel_label = self._active_selection_panel_label()
+            self._status_strip.show_message(
+                f"Select files in {panel_label} to open Template Rename",
+                2400,
+            )
+            return
+        dialog = TemplateRenameDialog(selected_paths, self)
+        if dialog.exec():
+            rename_items = dialog.rename_items()
+            if rename_items:
+                from musicorg.workers.file_rename_worker import FileRenameWorker
+                from PySide6.QtCore import QThread
+                worker = FileRenameWorker(rename_items)
+                thread = QThread()
+                worker.moveToThread(thread)
+                thread.started.connect(worker.run)
+                worker.finished.connect(lambda _: thread.quit())
+                worker.finished.connect(worker.deleteLater)
+                thread.finished.connect(thread.deleteLater)
+                worker.error.connect(
+                    lambda msg: self._status_strip.show_message(f"Rename error: {msg}", 4000)
+                )
+                self._status_strip.show_message("Renaming files...")
+                thread.start()
 
     def _open_artwork_from_selection(self) -> None:
         selected_paths = self._selected_paths_for_tools()
@@ -564,6 +667,8 @@ class MainWindow(QMainWindow):
         self._tag_editor_panel.shutdown()
         self._autotag_panel.shutdown()
         self._artwork_downloader_panel.shutdown()
+        self._quicktag_panel.shutdown()
+        self._spotify_features_panel.shutdown()
         self._sync_panel.shutdown()
         self._duplicates_panel.shutdown()
         self._raw_files_panel.shutdown()

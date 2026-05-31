@@ -46,6 +46,10 @@ class SettingsDialog(QDialog):
         self._dest_picker = DirPicker()
         self._discogs_token_edit = QLineEdit()
         self._discogs_token_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._spotify_client_id_edit = QLineEdit()
+        self._spotify_client_id_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._spotify_client_secret_edit = QLineEdit()
+        self._spotify_client_secret_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self._path_format_edit = QLineEdit()
         self._album_selection_mode_combo = QComboBox()
         for label, value in self._ALBUM_SELECTION_MODE_ITEMS:
@@ -54,6 +58,8 @@ class SettingsDialog(QDialog):
         form.addRow("Default Source Directory:", self._source_picker)
         form.addRow("Default Destination Directory:", self._dest_picker)
         form.addRow("Discogs User Token:", self._discogs_token_edit)
+        form.addRow("Spotify Client ID:", self._spotify_client_id_edit)
+        form.addRow("Spotify Client Secret:", self._spotify_client_secret_edit)
         form.addRow("Path Format:", self._path_format_edit)
         form.addRow("Artwork Click Behavior:", self._album_selection_mode_combo)
 
@@ -85,6 +91,8 @@ class SettingsDialog(QDialog):
         self._source_picker.set_path(self._settings.source_dir)
         self._dest_picker.set_path(self._settings.dest_dir)
         self._discogs_token_edit.setText(self._settings.discogs_token)
+        self._spotify_client_id_edit.setText(self._settings.spotify_client_id)
+        self._spotify_client_secret_edit.setText(self._settings.spotify_client_secret)
         self._path_format_edit.setText(self._settings.path_format)
         mode = self._settings.album_artwork_selection_mode
         index = self._album_selection_mode_combo.findData(mode)
@@ -96,6 +104,8 @@ class SettingsDialog(QDialog):
         self._settings.source_dir = self._source_picker.path()
         self._settings.dest_dir = self._dest_picker.path()
         self._settings.discogs_token = self._discogs_token_edit.text().strip()
+        self._settings.spotify_client_id = self._spotify_client_id_edit.text().strip()
+        self._settings.spotify_client_secret = self._spotify_client_secret_edit.text().strip()
         self._settings.path_format = self._path_format_edit.text().strip()
         self._settings.album_artwork_selection_mode = str(
             self._album_selection_mode_combo.currentData()

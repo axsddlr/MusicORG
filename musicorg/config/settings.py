@@ -47,6 +47,24 @@ class AppSettings:
     def discogs_token(self, value: str) -> None:
         self._qs.setValue("discogs/token", value)
 
+    # -- spotify --
+
+    @property
+    def spotify_client_id(self) -> str:
+        return self._qs.value("spotify/client_id", "", type=str)
+
+    @spotify_client_id.setter
+    def spotify_client_id(self, value: str) -> None:
+        self._qs.setValue("spotify/client_id", value)
+
+    @property
+    def spotify_client_secret(self) -> str:
+        return self._qs.value("spotify/client_secret", "", type=str)
+
+    @spotify_client_secret.setter
+    def spotify_client_secret(self, value: str) -> None:
+        self._qs.setValue("spotify/client_secret", value)
+
     # -- path format --
 
     @property

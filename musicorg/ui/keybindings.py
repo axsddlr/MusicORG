@@ -98,6 +98,27 @@ DEFAULT_KEYBINDS: tuple[KeybindSpec, ...] = (
         description="Show keyboard shortcut and selection behavior reference.",
         category="Help",
     ),
+    KeybindSpec(
+        id="tools.open_quicktag",
+        label="Open Quick Tag",
+        default_sequence="Ctrl+Shift+T",
+        description="Open Quick Tag for energy/mood/genre quick applying.",
+        category="Tools",
+    ),
+    KeybindSpec(
+        id="tools.open_spotify_features",
+        label="Open Spotify Audio Features",
+        default_sequence="Ctrl+Shift+F",
+        description="Open Spotify Audio Features panel.",
+        category="Tools",
+    ),
+    KeybindSpec(
+        id="tools.open_template_rename",
+        label="Open Template Rename",
+        default_sequence="Ctrl+Shift+R",
+        description="Open template-based file rename from tags.",
+        category="Tools",
+    ),
 )
 
 

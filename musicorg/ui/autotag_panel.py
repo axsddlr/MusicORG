@@ -9,7 +9,7 @@ from typing import cast
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QAbstractItemView, QDialog, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
+    QAbstractItemView, QCheckBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QMessageBox, QPushButton, QSplitter, QTableWidget, QTableWidgetItem,
     QSizePolicy,
     QVBoxLayout, QWidget,
@@ -91,6 +91,39 @@ class AutoTagPanel(QDialog):
         search_layout.addRow(search_btn_layout)
         layout.addWidget(search_group)
 
+        # -- source selection --
+        source_group = QGroupBox("Metadata Sources")
+        source_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        source_layout = QHBoxLayout(source_group)
+        source_layout.setContentsMargins(6, 6, 6, 6)
+        self._source_mb = QCheckBox("MusicBrainz")
+        self._source_mb.setChecked(True)
+        self._source_discogs = QCheckBox("Discogs")
+        self._source_discogs.setChecked(False)
+        self._source_beatport = QCheckBox("Beatport")
+        self._source_beatport.setChecked(False)
+        self._source_traxsource = QCheckBox("Traxsource")
+        self._source_traxsource.setChecked(False)
+        source_layout.addWidget(self._source_mb)
+        source_layout.addWidget(self._source_discogs)
+        source_layout.addWidget(self._source_beatport)
+        source_layout.addWidget(self._source_traxsource)
+        source_layout.addStretch()
+        layout.addWidget(source_group)
+
+        # -- regex cleanup --
+        cleanup_group = QGroupBox("Regex Title Cleanup (applied before search)")
+        cleanup_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        cleanup_layout = QFormLayout(cleanup_group)
+        cleanup_layout.setContentsMargins(6, 6, 6, 6)
+        self._cleanup_pattern_edit = QLineEdit()
+        self._cleanup_pattern_edit.setPlaceholderText(r'e.g. \s+\(Original Mix\)$')
+        self._cleanup_replace_edit = QLineEdit()
+        self._cleanup_replace_edit.setPlaceholderText("Leave empty to remove")
+        cleanup_layout.addRow("Find:", self._cleanup_pattern_edit)
+        cleanup_layout.addRow("Replace:", self._cleanup_replace_edit)
+        layout.addWidget(cleanup_group)
+
         # Splitter for match list and track comparison
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.setChildrenCollapsible(False)
@@ -159,6 +192,35 @@ class AutoTagPanel(QDialog):
 
         layout.addWidget(splitter, 1)
 
+        # -- overwrite options --
+        overwrite_group = QGroupBox("Tag Write Options")
+        overwrite_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        overwrite_layout = QHBoxLayout(overwrite_group)
+        overwrite_layout.setContentsMargins(6, 6, 6, 6)
+        self._overwrite_all = QCheckBox("All fields")
+        self._overwrite_all.setChecked(True)
+        self._overwrite_title = QCheckBox("Title"); self._overwrite_title.setChecked(True)
+        self._overwrite_artist = QCheckBox("Artist"); self._overwrite_artist.setChecked(True)
+        self._overwrite_album = QCheckBox("Album"); self._overwrite_album.setChecked(True)
+        self._overwrite_albumartist = QCheckBox("Album Artist"); self._overwrite_albumartist.setChecked(True)
+        self._overwrite_track = QCheckBox("Track#"); self._overwrite_track.setChecked(True)
+        self._overwrite_disc = QCheckBox("Disc#"); self._overwrite_disc.setChecked(True)
+        self._overwrite_year = QCheckBox("Year"); self._overwrite_year.setChecked(True)
+        self._overwrite_genre = QCheckBox("Genre"); self._overwrite_genre.setChecked(True)
+        self._overwrite_artwork = QCheckBox("Artwork"); self._overwrite_artwork.setChecked(True)
+        self._fill_empty = QCheckBox("Fill empty only")
+        self._fill_empty.setChecked(True)
+        self._fill_empty.setToolTip("Only write fields that are currently empty")
+
+        overwrite_layout.addWidget(self._overwrite_all)
+        for cb in [self._overwrite_title, self._overwrite_artist, self._overwrite_album,
+                     self._overwrite_albumartist, self._overwrite_track, self._overwrite_disc,
+                     self._overwrite_year, self._overwrite_genre, self._overwrite_artwork]:
+            overwrite_layout.addWidget(cb)
+        overwrite_layout.addStretch()
+        overwrite_layout.addWidget(self._fill_empty)
+        layout.addWidget(overwrite_group)
+
         # Apply button
         btn_layout = QHBoxLayout()
         btn_layout.setContentsMargins(0, 0, 0, 0)
@@ -181,6 +243,38 @@ class AutoTagPanel(QDialog):
 
     def set_discogs_token(self, token: str) -> None:
         self._discogs_token = token.strip()
+        self._source_discogs.setChecked(bool(self._discogs_token))
+
+    def _get_enabled_sources(self) -> list[str]:
+        sources: list[str] = []
+        if self._source_mb.isChecked():
+            sources.append("MusicBrainz")
+        if self._source_discogs.isChecked() and self._discogs_token:
+            sources.append("Discogs")
+        if self._source_beatport.isChecked():
+            sources.append("Beatport")
+        if self._source_traxsource.isChecked():
+            sources.append("Traxsource")
+        return sources
+
+    def _get_overwrite_fields(self) -> list[str]:
+        if self._overwrite_all.isChecked():
+            return []
+        fields: list[str] = []
+        for cb, name in [
+            (self._overwrite_title, "title"),
+            (self._overwrite_artist, "artist"),
+            (self._overwrite_album, "album"),
+            (self._overwrite_albumartist, "albumartist"),
+            (self._overwrite_track, "track"),
+            (self._overwrite_disc, "disc"),
+            (self._overwrite_year, "year"),
+            (self._overwrite_genre, "genre"),
+            (self._overwrite_artwork, "artwork"),
+        ]:
+            if cb.isChecked():
+                fields.append(name)
+        return fields
 
     def load_files(self, paths: list[Path]) -> None:
         """Load files for auto-tagging."""
@@ -241,8 +335,15 @@ class AutoTagPanel(QDialog):
         self._clear_artwork_preview()
         self._search_in_progress = True
         self._refresh_search_controls()
-        self._source_status_label.setText("Searching MusicBrainz and Discogs...")
+        self._source_status_label.setText("Searching...")
         self._progress.start("Searching...")
+
+        enabled_sources = self._get_enabled_sources()
+        if not enabled_sources:
+            QMessageBox.warning(self, "No Sources", "Select at least one metadata source.")
+            self._search_in_progress = False
+            self._refresh_search_controls()
+            return
 
         search_worker = AutoTagWorker(
             paths=self._files,
@@ -251,6 +352,9 @@ class AutoTagPanel(QDialog):
             title_hint=title_hint,
             mode=mode,
             discogs_token=self._discogs_token,
+            enabled_sources=enabled_sources,
+            regex_cleanup_pattern=self._cleanup_pattern_edit.text().strip(),
+            regex_cleanup_replacement=self._cleanup_replace_edit.text().strip(),
         )
         search_thread = QThread()
         search_worker.moveToThread(search_thread)
@@ -338,7 +442,7 @@ class AutoTagPanel(QDialog):
         source_errors: dict[str, str],
         candidates: list[MatchCandidate] | None = None,
     ) -> None:
-        source_names = ("MusicBrainz", "Discogs")
+        source_names = ("MusicBrainz", "Discogs", "Beatport", "Traxsource")
         counts: dict[str, int] = {name: 0 for name in source_names}
         for name in source_names:
             counts[name] = max(0, source_counts.get(name, 0))
@@ -479,11 +583,15 @@ class AutoTagPanel(QDialog):
         self._apply_btn.setEnabled(False)
         self._progress.start("Applying match...")
 
+        overwrite_fields = self._get_overwrite_fields()
+
         self._apply_worker = ApplyMatchWorker(
             self._files,
             candidate,
             cache_db_path=self._cache_db_path,
             discogs_token=self._discogs_token,
+            overwrite_fields=overwrite_fields,
+            fill_empty_only=self._fill_empty.isChecked(),
         )
         self._apply_thread = QThread()
         self._apply_worker.moveToThread(self._apply_thread)

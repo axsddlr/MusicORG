@@ -75,8 +75,9 @@ class AutoTagger:
 
     _mb_useragent_set = False
 
-    def __init__(self, discogs_token: str = "") -> None:
+    def __init__(self, discogs_token: str = "", enabled_sources: list[str] | None = None) -> None:
         self._discogs_token = discogs_token.strip()
+        self._enabled_sources = enabled_sources or ["MusicBrainz", "Discogs"]
         if not AutoTagger._mb_useragent_set:
             try:
                 import musicbrainzngs
@@ -124,18 +125,34 @@ class AutoTagger:
         source_errors: dict[str, str] = {}
         attempted_sources: list[str] = []
 
-        attempted_sources.append("MusicBrainz")
-        try:
-            results.extend(self._call_with_retry(self._search_album_mb, artist, album))
-        except Exception as exc:
-            source_errors["MusicBrainz"] = str(exc)
+        sources = self._enabled_sources
+        if "MusicBrainz" in sources:
+            attempted_sources.append("MusicBrainz")
+            try:
+                results.extend(self._call_with_retry(self._search_album_mb, artist, album))
+            except Exception as exc:
+                source_errors["MusicBrainz"] = str(exc)
 
-        if self._discogs_token:
+        if self._discogs_token and "Discogs" in sources:
             attempted_sources.append("Discogs")
             try:
                 results.extend(self._call_with_retry(self._search_album_discogs, artist, album))
             except Exception as exc:
                 source_errors["Discogs"] = str(exc)
+
+        if "Beatport" in sources:
+            attempted_sources.append("Beatport")
+            try:
+                results.extend(self._call_with_retry(self._search_album_beatport, artist, album))
+            except Exception as exc:
+                source_errors["Beatport"] = str(exc)
+
+        if "Traxsource" in sources:
+            attempted_sources.append("Traxsource")
+            try:
+                results.extend(self._call_with_retry(self._search_album_traxsource, artist, album))
+            except Exception as exc:
+                source_errors["Traxsource"] = str(exc)
 
         results.sort(key=lambda m: m.distance)
         if not results and attempted_sources and len(source_errors) == len(attempted_sources):
@@ -191,18 +208,34 @@ class AutoTagger:
         source_errors: dict[str, str] = {}
         attempted_sources: list[str] = []
 
-        attempted_sources.append("MusicBrainz")
-        try:
-            results.extend(self._call_with_retry(self._search_item_mb, artist, title))
-        except Exception as exc:
-            source_errors["MusicBrainz"] = str(exc)
+        sources = self._enabled_sources
+        if "MusicBrainz" in sources:
+            attempted_sources.append("MusicBrainz")
+            try:
+                results.extend(self._call_with_retry(self._search_item_mb, artist, title))
+            except Exception as exc:
+                source_errors["MusicBrainz"] = str(exc)
 
-        if self._discogs_token:
+        if self._discogs_token and "Discogs" in sources:
             attempted_sources.append("Discogs")
             try:
                 results.extend(self._call_with_retry(self._search_item_discogs, artist, title))
             except Exception as exc:
                 source_errors["Discogs"] = str(exc)
+
+        if "Beatport" in sources:
+            attempted_sources.append("Beatport")
+            try:
+                results.extend(self._call_with_retry(self._search_item_beatport, artist, title))
+            except Exception as exc:
+                source_errors["Beatport"] = str(exc)
+
+        if "Traxsource" in sources:
+            attempted_sources.append("Traxsource")
+            try:
+                results.extend(self._call_with_retry(self._search_item_traxsource, artist, title))
+            except Exception as exc:
+                source_errors["Traxsource"] = str(exc)
 
         results.sort(key=lambda m: m.distance)
         if not results and attempted_sources and len(source_errors) == len(attempted_sources):
@@ -245,6 +278,171 @@ class AutoTagger:
             )
         except Exception as exc:
             raise MusicOrgError(ErrorCode.OPERATION_FAILED, message=f"Apply match failed: {exc}", details={"cause": str(exc)}) from exc
+
+    def apply_match_with_overrides(
+        self,
+        paths: list[str | Path],
+        match: MatchCandidate,
+        *,
+        overwrite_fields: list[str],
+        fill_empty_only: bool = True,
+    ) -> bool:
+        if not paths:
+            return False
+        match_payload = getattr(match, "raw_match", None)
+        if not isinstance(match_payload, dict):
+            return False
+
+        try:
+            artwork = self._download_artwork_from_urls(match_payload.get("artwork_urls", []))
+            artwork_data = artwork[0] if artwork else None
+            artwork_mime = artwork[1] if artwork else ""
+
+            tag_writer = TagManager()
+            field_set = set(overwrite_fields)
+            if isinstance(match_payload.get("tracks"), list):
+                return self._apply_album_match_selective(
+                    tag_writer=tag_writer,
+                    paths=paths,
+                    match_payload=match_payload,
+                    artwork_data=artwork_data,
+                    artwork_mime=artwork_mime,
+                    field_set=field_set,
+                    fill_empty_only=fill_empty_only,
+                )
+            return self._apply_single_match_selective(
+                tag_writer=tag_writer,
+                paths=paths,
+                match_payload=match_payload,
+                artwork_data=artwork_data,
+                artwork_mime=artwork_mime,
+                field_set=field_set,
+                fill_empty_only=fill_empty_only,
+            )
+        except Exception as exc:
+            raise MusicOrgError(ErrorCode.OPERATION_FAILED, message=f"Apply match failed: {exc}", details={"cause": str(exc)}) from exc
+
+    def _apply_album_match_selective(
+        self,
+        tag_writer: TagManager,
+        paths: list[str | Path],
+        match_payload: MatchPayload,
+        artwork_data: bytes | None,
+        artwork_mime: str,
+        field_set: set[str],
+        fill_empty_only: bool,
+    ) -> bool:
+        file_rows: list[tuple[int, int, int, Path]] = []
+        for index, path in enumerate(paths):
+            path_obj = Path(path)
+            disc = 1
+            track = index + 1
+            try:
+                tags = tag_writer.read(path_obj)
+                if tags.disc > 0:
+                    disc = tags.disc
+                if tags.track > 0:
+                    track = tags.track
+            except Exception:
+                pass
+            file_rows.append((disc, track, index, path_obj))
+        file_rows.sort(key=lambda row: (row[0], row[1], row[2]))
+
+        tracks = list(match_payload.get("tracks") or [])
+        tracks.sort(key=lambda row: (self._coerce_int(row.get("disc"), 1), self._coerce_int(row.get("track"), 0)))
+        if not tracks:
+            return False
+
+        album_artist = match_payload.get("artist", "")
+        album = match_payload.get("album", "")
+        year = self._coerce_int(match_payload.get("year", 0), 0)
+        genre = match_payload.get("genre", "")
+
+        for index, (_, _, _, path_obj) in enumerate(file_rows):
+            track_row = tracks[index] if index < len(tracks) else tracks[-1]
+            try:
+                existing = tag_writer.read(path_obj)
+            except Exception:
+                existing = TagData()
+
+            title = track_row.get("title", "")
+            artist = track_row.get("artist", album_artist)
+
+            def _use(field: str, new_val: str | int) -> str | int:
+                if field not in field_set:
+                    return getattr(existing, field, "" if isinstance(new_val, str) else 0)
+                if fill_empty_only:
+                    current = getattr(existing, field, "" if isinstance(new_val, str) else 0)
+                    if isinstance(new_val, str) and current:
+                        return current
+                    if isinstance(new_val, int) and current:
+                        return current
+                return new_val
+
+            tag_data = TagData(
+                title=_use("title", title),
+                artist=_use("artist", artist),
+                album=_use("album", album),
+                albumartist=_use("albumartist", album_artist),
+                track=self._coerce_int(_use("track", self._coerce_int(track_row.get("track"), index + 1)), index + 1),
+                disc=self._coerce_int(_use("disc", self._coerce_int(track_row.get("disc"), 1)), 1),
+                year=self._coerce_int(_use("year", year), 0),
+                genre=_use("genre", genre),
+                artwork_data=artwork_data if "artwork" in field_set else None,
+                artwork_mime=artwork_mime if "artwork" in field_set else "",
+            )
+            tag_writer.write(path_obj, tag_data)
+        return True
+
+    def _apply_single_match_selective(
+        self,
+        tag_writer: TagManager,
+        paths: list[str | Path],
+        match_payload: MatchPayload,
+        artwork_data: bytes | None,
+        artwork_mime: str,
+        field_set: set[str],
+        fill_empty_only: bool,
+    ) -> bool:
+        artist = match_payload.get("artist", "")
+        album = match_payload.get("album", "")
+        title = match_payload.get("title", "")
+        year = self._coerce_int(match_payload.get("year", 0), 0)
+        genre = match_payload.get("genre", "")
+        track = self._coerce_int(match_payload.get("track", 0), 0)
+        disc = self._coerce_int(match_payload.get("disc", 0), 0)
+
+        for path in paths:
+            try:
+                existing = tag_writer.read(path)
+            except Exception:
+                existing = TagData()
+
+            def _use(field: str, new_val: str | int) -> str | int:
+                if field not in field_set:
+                    return getattr(existing, field, "" if isinstance(new_val, str) else 0)
+                if fill_empty_only:
+                    current = getattr(existing, field, "" if isinstance(new_val, str) else 0)
+                    if isinstance(new_val, str) and current:
+                        return current
+                    if isinstance(new_val, int) and current:
+                        return current
+                return new_val
+
+            tag_data = TagData(
+                title=_use("title", title),
+                artist=_use("artist", artist),
+                album=_use("album", album),
+                albumartist=_use("albumartist", artist),
+                track=self._coerce_int(_use("track", track), 0),
+                disc=self._coerce_int(_use("disc", disc), 0),
+                year=self._coerce_int(_use("year", year), 0),
+                genre=_use("genre", genre),
+                artwork_data=artwork_data if "artwork" in field_set else None,
+                artwork_mime=artwork_mime if "artwork" in field_set else "",
+            )
+            tag_writer.write(path, tag_data)
+        return True
 
     def _resolve_hints_from_files(
         self,
@@ -571,6 +769,168 @@ class AutoTagger:
             )
             if len(candidates) >= 5:
                 break
+        return candidates
+
+    def _search_album_beatport(self, artist: str, album: str) -> list[MatchCandidate]:
+        from musicorg.core.beatport_client import BeatportClient
+
+        client = BeatportClient()
+        raw_results = client.search_album(artist, album, limit=5)
+        candidates: list[MatchCandidate] = []
+        for raw in raw_results:
+            source_artist = str(raw.get("artist", ""))
+            source_album = str(raw.get("album", ""))
+            distance = 1.0 - max(0.0, min(1.0, SequenceMatcher(
+                None,
+                (artist + " " + album).lower(),
+                (source_artist + " " + source_album).lower(),
+            ).ratio()))
+            raw_match: MatchPayload = {
+                "source": "Beatport",
+                "artist": source_artist,
+                "album": source_album,
+                "year": 0,
+                "release_id": "",
+                "release_group_id": "",
+                "tracks": raw.get("tracks", []),
+                "artwork_urls": raw.get("artwork_urls", []),
+                "genre": str(raw.get("genre", "")),
+            }
+            candidates.append(MatchCandidate(
+                source="Beatport",
+                artist=source_artist,
+                album=source_album,
+                year=0,
+                distance=distance,
+                tracks=raw_match.get("tracks", []),
+                raw_match=raw_match,
+            ))
+        return candidates
+
+    def _search_album_traxsource(self, artist: str, album: str) -> list[MatchCandidate]:
+        from musicorg.core.traxsource_client import TraxsourceClient
+
+        client = TraxsourceClient()
+        raw_results = client.search_album(artist, album, limit=5)
+        candidates: list[MatchCandidate] = []
+        for raw in raw_results:
+            source_artist = str(raw.get("artist", ""))
+            source_album = str(raw.get("album", ""))
+            distance = 1.0 - max(0.0, min(1.0, SequenceMatcher(
+                None,
+                (artist + " " + album).lower(),
+                (source_artist + " " + source_album).lower(),
+            ).ratio()))
+            raw_match: MatchPayload = {
+                "source": "Traxsource",
+                "artist": source_artist,
+                "album": source_album,
+                "year": 0,
+                "release_id": "",
+                "release_group_id": "",
+                "tracks": raw.get("tracks", []),
+                "artwork_urls": raw.get("artwork_urls", []),
+                "genre": str(raw.get("genre", "")),
+            }
+            candidates.append(MatchCandidate(
+                source="Traxsource",
+                artist=source_artist,
+                album=source_album,
+                year=0,
+                distance=distance,
+                tracks=raw_match.get("tracks", []),
+                raw_match=raw_match,
+            ))
+        return candidates
+
+    def _search_item_beatport(self, artist: str, title: str) -> list[MatchCandidate]:
+        from musicorg.core.beatport_client import BeatportClient
+
+        client = BeatportClient()
+        raw_results = client.search_item(artist, title, limit=5)
+        candidates: list[MatchCandidate] = []
+        for raw in raw_results:
+            source_artist = str(raw.get("artist", ""))
+            source_title = str(raw.get("title", ""))
+            source_release = str(raw.get("release", ""))
+            distance = 1.0 - max(0.0, min(1.0, SequenceMatcher(
+                None,
+                (artist + " " + title).lower(),
+                (source_artist + " " + source_title).lower(),
+            ).ratio()))
+            raw_match: MatchPayload = {
+                "source": "Beatport",
+                "artist": source_artist,
+                "album": source_release,
+                "year": 0,
+                "release_id": "",
+                "release_group_id": "",
+                "track": 0,
+                "disc": 1,
+                "title": source_title,
+                "length": 0,
+                "artwork_urls": [raw.get("cover_url", "")] if raw.get("cover_url") else [],
+                "genre": str(raw.get("genre", "")),
+            }
+            candidates.append(MatchCandidate(
+                source="Beatport",
+                artist=source_artist,
+                album=source_release,
+                year=0,
+                distance=distance,
+                tracks=[{
+                    "track": 0, "disc": 1,
+                    "title": source_title,
+                    "artist": source_artist,
+                    "length": 0,
+                }],
+                raw_match=raw_match,
+            ))
+        return candidates
+
+    def _search_item_traxsource(self, artist: str, title: str) -> list[MatchCandidate]:
+        from musicorg.core.traxsource_client import TraxsourceClient
+
+        client = TraxsourceClient()
+        raw_results = client.search_item(artist, title, limit=5)
+        candidates: list[MatchCandidate] = []
+        for raw in raw_results:
+            source_artist = str(raw.get("artist", ""))
+            source_title = str(raw.get("title", ""))
+            source_release = str(raw.get("release", ""))
+            distance = 1.0 - max(0.0, min(1.0, SequenceMatcher(
+                None,
+                (artist + " " + title).lower(),
+                (source_artist + " " + source_title).lower(),
+            ).ratio()))
+            raw_match: MatchPayload = {
+                "source": "Traxsource",
+                "artist": source_artist,
+                "album": source_release,
+                "year": 0,
+                "release_id": "",
+                "release_group_id": "",
+                "track": 0,
+                "disc": 1,
+                "title": source_title,
+                "length": 0,
+                "artwork_urls": [raw.get("cover_url", "")] if raw.get("cover_url") else [],
+                "genre": str(raw.get("genre", "")),
+            }
+            candidates.append(MatchCandidate(
+                source="Traxsource",
+                artist=source_artist,
+                album=source_release,
+                year=0,
+                distance=distance,
+                tracks=[{
+                    "track": 0, "disc": 1,
+                    "title": source_title,
+                    "artist": source_artist,
+                    "length": 0,
+                }],
+                raw_match=raw_match,
+            ))
         return candidates
 
     def _apply_album_match(
@@ -950,7 +1310,7 @@ class AutoTagger:
         candidates: list[MatchCandidate],
         source_errors: dict[str, str],
     ) -> SearchDiagnostics:
-        source_counts: dict[str, int] = {"MusicBrainz": 0, "Discogs": 0}
+        source_counts: dict[str, int] = {"MusicBrainz": 0, "Discogs": 0, "Beatport": 0, "Traxsource": 0}
         for candidate in candidates:
             if candidate.source in source_counts:
                 source_counts[candidate.source] += 1
