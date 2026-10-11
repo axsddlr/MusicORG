@@ -505,20 +505,9 @@ class MainWindow(QMainWindow):
         if dialog.exec():
             rename_items = dialog.rename_items()
             if rename_items:
-                from musicorg.workers.file_rename_worker import FileRenameWorker
-                from PySide6.QtCore import QThread
-                worker = FileRenameWorker(rename_items)
-                thread = QThread()
-                worker.moveToThread(thread)
-                thread.started.connect(worker.run)
-                worker.finished.connect(lambda _: thread.quit())
-                worker.finished.connect(worker.deleteLater)
-                thread.finished.connect(thread.deleteLater)
-                worker.error.connect(
-                    lambda msg: self._status_strip.show_message(f"Rename error: {msg}", 4000)
-                )
-                self._status_strip.show_message("Renaming files...")
-                thread.start()
+                # RawFilesPanel owns the rename worker lifecycle (thread quit on
+                # error/cancel, shutdown, tag cache invalidation).
+                self._raw_files_panel._start_batch_rename(rename_items)
 
     def _open_artwork_from_selection(self) -> None:
         selected_paths = self._selected_paths_for_tools()
