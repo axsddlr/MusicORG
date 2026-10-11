@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
+from musicorg.core.batch_rename import (
+    RenamePreviewItem,
+    _INVALID_FILENAME_CHARS_RE,
+    _normalize_destination_name,
+    _validate_destination_name,
+    _validate_existing_destination_conflicts,
+    _validate_final_destinations,
+)
 from musicorg.core.tagger import TagManager
 
-_TAG_VAR_RE = re.compile(r"\$(artist|title|album|albumartist|track|disc|year|genre)")
+_VAR_RE = re.compile(r"\$([A-Za-z]+)")
+_VARS = {"artist", "title", "album", "albumartist", "track", "disc", "year", "genre"}
 
 
 @dataclass
@@ -27,14 +36,12 @@ def build_template_rename(
     if not template.strip():
         raise ValueError("Template cannot be empty")
 
-    invalid_vars = set(_TAG_VAR_RE.findall(template)) - {
-        "artist", "title", "album", "albumartist", "track", "disc", "year", "genre"
-    }
-    if invalid_vars:
-        raise ValueError(f"Unknown variables: {', '.join(sorted(invalid_vars))}")
+    unknown = sorted(set(_VAR_RE.findall(template)) - _VARS)
+    if unknown:
+        raise ValueError(f"Unknown variables: {', '.join('$' + v for v in unknown)}")
 
     tm = TagManager()
-    items: list[TemplateRenameItem] = []
+    pairs: list[tuple[Path, Path]] = []
 
     for path in paths:
         try:
@@ -42,49 +49,46 @@ def build_template_rename(
         except Exception:
             continue
 
-        dest = template
-        replacements: dict[str, str] = {
+        values = {
             "artist": tags.artist or "",
             "title": tags.title or "",
             "album": tags.album or "",
             "albumartist": tags.albumartist or "",
             "year": str(tags.year) if tags.year else "",
             "genre": tags.genre or "",
+            "track": f"{tags.track:02d}" if tags.track else "",
+            "disc": f"{tags.disc:02d}" if tags.disc else "",
         }
-        replacements["track"] = f"{tags.track:02d}" if tags.track else ""
-        replacements["disc"] = f"{tags.disc:02d}" if tags.disc else ""
-
-        dest = re.sub(r"\$artist", _escape_path(replacements["artist"]), dest)
-        dest = re.sub(r"\$title", _escape_path(replacements["title"]), dest)
-        dest = re.sub(r"\$album", _escape_path(replacements["album"]), dest)
-        dest = re.sub(r"\$albumartist", _escape_path(replacements["albumartist"]), dest)
-        dest = re.sub(r"\$track", _escape_path(replacements["track"]), dest)
-        dest = re.sub(r"\$disc", _escape_path(replacements["disc"]), dest)
-        dest = re.sub(r"\$year", _escape_path(replacements["year"]), dest)
-        dest = re.sub(r"\$genre", _escape_path(replacements["genre"]), dest)
+        # Function replacement keeps tag values literal (no group-reference expansion).
+        dest = _VAR_RE.sub(lambda m: _escape_path(values[m.group(1)]), template)
 
         if sanitize:
             dest = _sanitize_filename(dest)
+        dest = _normalize_destination_name(dest)
+        if not dest.lower().endswith(path.suffix.lower()):
+            dest += path.suffix
+        _validate_destination_name(dest, path.name)
+        pairs.append((path, path.parent / dest))
 
-        dest_path = path.parent / dest
-        if dest_path != path and dest_path.name:
-            items.append(
-                TemplateRenameItem(
-                    source=path,
-                    destination=dest_path,
-                    new_name=dest_path.name,
-                )
-            )
-
+    _validate_final_destinations(pairs)
+    items = [
+        TemplateRenameItem(source=src, destination=dst, new_name=dst.name)
+        for src, dst in pairs
+        if dst != src
+    ]
+    _validate_existing_destination_conflicts(
+        [src for src, _ in pairs],
+        [RenamePreviewItem(i.source, i.destination) for i in items],
+    )
     return items
 
 
 def _escape_path(value: str) -> str:
-    return re.sub(r'[<>:"/\\|?*]', "_", value)
+    return _INVALID_FILENAME_CHARS_RE.sub("_", value)
 
 
 def _sanitize_filename(name: str) -> str:
-    name = re.sub(r'[<>:"/\\|?*]', "_", name)
+    name = _INVALID_FILENAME_CHARS_RE.sub("_", name)
     name = re.sub(r"_{2,}", "_", name)
     name = name.strip(". ")
     return name if name else "unknown"

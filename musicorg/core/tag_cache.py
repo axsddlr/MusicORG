@@ -36,60 +36,63 @@ CREATE TABLE IF NOT EXISTS tag_cache (
 class TagCache:
     """Caches TagData per file path and file fingerprint.
     
-    Thread-safe for concurrent reads and writes using a reentrant lock.
+    Thread-safe: all connection use (reads and writes) holds a reentrant lock.
     """
 
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = Path(db_path)
         self._conn: sqlite3.Connection | None = None
-        self._lock = threading.RLock()  # Reentrant lock for thread-safe writes
+        self._lock = threading.RLock()  # Reentrant lock guarding all connection use
 
     def open(self) -> None:
         """Open the cache DB and initialize schema."""
-        if self._conn is not None:
-            return
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self._db_path, check_same_thread=False)
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
-        conn.execute(SCHEMA_SQL)
-        # Migrate existing DBs: add missing columns
-        # SECURITY: Column definitions are hardcoded literals below.
-        # Never make column names dynamic or user-controlled, as ALTER TABLE
-        # statements use f-strings which would be vulnerable to SQL injection.
-        for col_def in (
-            "bitrate INTEGER NOT NULL DEFAULT 0",
-            "comment TEXT NOT NULL DEFAULT ''",
-            "lyrics TEXT NOT NULL DEFAULT ''",
-        ):
-            try:
-                conn.execute(f"ALTER TABLE tag_cache ADD COLUMN {col_def}")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
-        conn.commit()
-        self._conn = conn
+        with self._lock:
+            if self._conn is not None:
+                return
+            self._db_path.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(self._db_path, check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+            conn.execute(SCHEMA_SQL)
+            # Migrate existing DBs: add missing columns
+            # SECURITY: Column definitions are hardcoded literals below.
+            # Never make column names dynamic or user-controlled, as ALTER TABLE
+            # statements use f-strings which would be vulnerable to SQL injection.
+            for col_def in (
+                "bitrate INTEGER NOT NULL DEFAULT 0",
+                "comment TEXT NOT NULL DEFAULT ''",
+                "lyrics TEXT NOT NULL DEFAULT ''",
+            ):
+                try:
+                    conn.execute(f"ALTER TABLE tag_cache ADD COLUMN {col_def}")
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
+            conn.commit()
+            self._conn = conn
 
     def close(self) -> None:
         """Close the active DB connection."""
-        if self._conn is None:
-            return
-        self._conn.close()
-        self._conn = None
+        with self._lock:
+            if self._conn is None:
+                return
+            self._conn.close()
+            self._conn = None
 
     def get(self, path: str | Path, mtime_ns: int, size: int) -> TagData | None:
         """Return cached tags when path and fingerprint match."""
-        row = self._conn_or_raise().execute(
-            """
-            SELECT
-                title, artist, album, albumartist,
-                track, disc, year, genre, composer,
-                duration, bitrate, artwork_data, artwork_mime,
-                comment, lyrics
-            FROM tag_cache
-            WHERE path = ? AND mtime_ns = ? AND size = ?
-            """,
-            (self._normalize_path(path), int(mtime_ns), int(size)),
-        ).fetchone()
+        with self._lock:
+            row = self._conn_or_raise().execute(
+                """
+                SELECT
+                    title, artist, album, albumartist,
+                    track, disc, year, genre, composer,
+                    duration, bitrate, artwork_data, artwork_mime,
+                    comment, lyrics
+                FROM tag_cache
+                WHERE path = ? AND mtime_ns = ? AND size = ?
+                """,
+                (self._normalize_path(path), int(mtime_ns), int(size)),
+            ).fetchone()
         if row is None:
             return None
         artwork = row[11]

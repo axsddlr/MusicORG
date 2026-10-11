@@ -346,3 +346,42 @@ class TestConcurrency:
         assert not errors, f"Concurrent errors: {errors}"
         assert lib.total_tracks() == 80
         lib.close()
+
+    def test_concurrent_read_while_writing(self, tmp_path: Path) -> None:
+        lib = LibraryDatabase(tmp_path / "concurrent_rw.db")
+        lib.open()
+        errors: list[str] = []
+
+        def writer(wid: int) -> None:
+            try:
+                for i in range(30):
+                    lib.upsert_track(
+                        path=f"/m/w{wid}_t{i}.mp3",
+                        title=f"Song-{wid}-{i}",
+                        artist=f"Artist-{wid}",
+                        album=f"Album-{i % 3}",
+                    )
+            except Exception as e:
+                errors.append(f"writer {wid}: {e!r}")
+
+        def reader(rid: int) -> None:
+            try:
+                for i in range(30):
+                    lib.get_track(f"/m/w{rid}_t{i}.mp3")
+                    lib.search_tracks("Song")
+                    lib.list_albums()
+                    lib.list_artists()
+                    lib.total_tracks()
+            except Exception as e:
+                errors.append(f"reader {rid}: {e!r}")
+
+        threads = [threading.Thread(target=writer, args=(i,)) for i in range(3)]
+        threads += [threading.Thread(target=reader, args=(i,)) for i in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, f"Concurrent errors: {errors}"
+        assert lib.total_tracks() == 90
+        lib.close()

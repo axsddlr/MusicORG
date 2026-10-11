@@ -6,6 +6,7 @@ with a single SQLite database using a normalized artists/albums/tracks schema.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import sqlite3
 import threading
@@ -164,11 +165,19 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _locked(fn):
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return fn(self, *args, **kwargs)
+
+    return wrapper
+
+
 class LibraryDatabase:
     """Persistent normalized library with artists, albums, tracks and artwork.
 
-    Thread-safe for concurrent reads and serialized writes using RLock.
-    Uses WAL mode for concurrent reads.
+    Thread-safe: every method that uses the shared connection holds an RLock.
     """
 
     SCHEMA_VERSION = "1"
@@ -181,6 +190,7 @@ class LibraryDatabase:
 
     # -- lifecycle --
 
+    @_locked
     def open(self) -> None:
         if self._conn is not None:
             return
@@ -213,6 +223,7 @@ class LibraryDatabase:
             except sqlite3.OperationalError:
                 pass
 
+    @_locked
     def close(self) -> None:
         if self._conn is None:
             return
@@ -221,11 +232,13 @@ class LibraryDatabase:
 
     # -- transactions --
 
+    @_locked
     def begin_batch(self) -> None:
         self._batch_depth += 1
         if self._batch_depth == 1:
             self._conn_or_raise().execute("BEGIN")
 
+    @_locked
     def end_batch(self) -> None:
         if self._batch_depth <= 0:
             return
@@ -235,6 +248,7 @@ class LibraryDatabase:
 
     # -- artists --
 
+    @_locked
     def get_or_create_artist(self, name: str) -> int:
         name = name.strip() or "Unknown Artist"
         normalized = _normalize(name)
@@ -257,6 +271,7 @@ class LibraryDatabase:
                 ).fetchone()[0]
             )
 
+    @_locked
     def get_artist(self, artist_id: int) -> ArtistRecord | None:
         row = self._conn_or_raise().execute(
             "SELECT artist_id, name, sort_name, thumbnail FROM artists WHERE artist_id = ?",
@@ -271,6 +286,7 @@ class LibraryDatabase:
             thumbnail=bytes(row[3]) if row[3] is not None else None,
         )
 
+    @_locked
     def search_artists(self, query: str) -> list[ArtistRecord]:
         pattern = f"%{_normalize(query)}%"
         rows = self._conn_or_raise().execute(
@@ -286,6 +302,7 @@ class LibraryDatabase:
             for r in rows
         ]
 
+    @_locked
     def list_artists(self) -> list[ArtistRecord]:
         rows = self._conn_or_raise().execute(
             "SELECT artist_id, name, sort_name, thumbnail FROM artists ORDER BY name"
@@ -301,6 +318,7 @@ class LibraryDatabase:
 
     # -- albums --
 
+    @_locked
     def get_or_create_album(
         self, artist_id: int, title: str,
         year: int = 0, genre: str = "",
@@ -351,6 +369,7 @@ class LibraryDatabase:
                 ).fetchone()[0]
             )
 
+    @_locked
     def get_album(self, album_id: int) -> AlbumRecord | None:
         row = self._conn_or_raise().execute(
             """SELECT album_id, artist_id, title, year, genre,
@@ -370,6 +389,7 @@ class LibraryDatabase:
             date_modified=int(row[8] or 0),
         )
 
+    @_locked
     def get_albums_by_artist(self, artist_id: int) -> list[AlbumRecord]:
         rows = self._conn_or_raise().execute(
             """SELECT album_id, artist_id, title, year, genre,
@@ -390,6 +410,7 @@ class LibraryDatabase:
             for r in rows
         ]
 
+    @_locked
     def search_albums(self, query: str) -> list[AlbumRecord]:
         pattern = f"%{_normalize(query)}%"
         rows = self._conn_or_raise().execute(
@@ -412,6 +433,7 @@ class LibraryDatabase:
             for r in rows
         ]
 
+    @_locked
     def list_albums(self) -> list[AlbumRecord]:
         rows = self._conn_or_raise().execute(
             """SELECT album_id, artist_id, title, year, genre,
@@ -433,6 +455,7 @@ class LibraryDatabase:
 
     # -- tracks --
 
+    @_locked
     def upsert_track(
         self,
         path: str | Path,
@@ -521,6 +544,7 @@ class LibraryDatabase:
             artwork_id=artwork_id,
         )
 
+    @_locked
     def get_track(self, path: str | Path) -> TrackRecord | None:
         row = self._conn_or_raise().execute(
             """SELECT track_id, album_id, path, title, artist,
@@ -535,6 +559,7 @@ class LibraryDatabase:
             return None
         return self._row_to_track(row)
 
+    @_locked
     def get_tracks_by_album(self, album_id: int) -> list[TrackRecord]:
         rows = self._conn_or_raise().execute(
             """SELECT track_id, album_id, path, title, artist,
@@ -548,6 +573,7 @@ class LibraryDatabase:
         ).fetchall()
         return [self._row_to_track(r) for r in rows]
 
+    @_locked
     def search_tracks(
         self,
         query: str,
@@ -590,6 +616,7 @@ class LibraryDatabase:
         rows = self._conn_or_raise().execute(sql, params).fetchall()
         return [self._row_to_track(r) for r in rows]
 
+    @_locked
     def get_track_tags(self, path: str | Path) -> dict[str, Any] | None:
         """Return a dict of all tag fields for a track (denormalized with album/artist)."""
         row = self._conn_or_raise().execute(
@@ -627,6 +654,7 @@ class LibraryDatabase:
             "artwork_mime": artwork[1] if artwork else "",
         }
 
+    @_locked
     def remove_track(self, path: str | Path) -> None:
         normalized = _normalize_path(path)
         conn = self._conn_or_raise()
@@ -640,6 +668,7 @@ class LibraryDatabase:
         if row is not None:
             self._update_album_track_count(int(row[0]))
 
+    @_locked
     def remove_missing_tracks(self, known_paths: set[str]) -> list[str]:
         conn = self._conn_or_raise()
         normalized_known = {_normalize_path(p) for p in known_paths}
@@ -664,6 +693,7 @@ class LibraryDatabase:
 
     # -- artwork --
 
+    @_locked
     def _store_artwork(self, data: bytes, mime: str) -> int | None:
         if not data:
             return None
@@ -698,12 +728,14 @@ class LibraryDatabase:
                 ).fetchone()[0]
             )
 
+    @_locked
     def get_artwork(self, artwork_id: int) -> bytes | None:
         row = self._conn_or_raise().execute(
             "SELECT data FROM artwork WHERE artwork_id = ?", (artwork_id,)
         ).fetchone()
         return bytes(row[0]) if row is not None else None
 
+    @_locked
     def get_artwork_with_mime(self, artwork_id: int) -> tuple[bytes, str] | None:
         row = self._conn_or_raise().execute(
             "SELECT data, mime FROM artwork WHERE artwork_id = ?", (artwork_id,)
@@ -712,6 +744,7 @@ class LibraryDatabase:
             return None
         return (bytes(row[0]), str(row[1]))
 
+    @_locked
     def get_artwork_for_track(self, path: str | Path) -> tuple[bytes, str] | None:
         row = self._conn_or_raise().execute(
             """SELECT a.data, a.mime FROM artwork a
@@ -723,6 +756,7 @@ class LibraryDatabase:
             return None
         return (bytes(row[0]), str(row[1]))
 
+    @_locked
     def get_artwork_for_album(self, album_id: int) -> tuple[bytes, str] | None:
         row = self._conn_or_raise().execute(
             """SELECT a.data, a.mime FROM artwork a
@@ -749,6 +783,7 @@ class LibraryDatabase:
             tags.pop(key, None)
         self._set_custom_tags(path, tags)
 
+    @_locked
     def list_custom_tag_keys(self) -> list[str]:
         keys: set[str] = set()
         rows = self._conn_or_raise().execute(
@@ -762,6 +797,7 @@ class LibraryDatabase:
                 pass
         return sorted(keys)
 
+    @_locked
     def _get_custom_tags(self, path: str | Path) -> dict[str, str]:
         normalized = _normalize_path(path)
         row = self._conn_or_raise().execute(
@@ -775,6 +811,7 @@ class LibraryDatabase:
         except Exception:
             return {}
 
+    @_locked
     def _set_custom_tags(self, path: str | Path, tags: dict[str, str]) -> None:
         import json
         normalized = _normalize_path(path)
@@ -789,36 +826,42 @@ class LibraryDatabase:
 
     # -- stats --
 
+    @_locked
     def total_tracks(self) -> int:
         row = self._conn_or_raise().execute(
             "SELECT COUNT(*) FROM tracks"
         ).fetchone()
         return int(row[0]) if row else 0
 
+    @_locked
     def total_albums(self) -> int:
         row = self._conn_or_raise().execute(
             "SELECT COUNT(*) FROM albums"
         ).fetchone()
         return int(row[0]) if row else 0
 
+    @_locked
     def total_artists(self) -> int:
         row = self._conn_or_raise().execute(
             "SELECT COUNT(*) FROM artists"
         ).fetchone()
         return int(row[0]) if row else 0
 
+    @_locked
     def total_duration(self) -> float:
         row = self._conn_or_raise().execute(
             "SELECT COALESCE(SUM(duration), 0.0) FROM tracks"
         ).fetchone()
         return float(row[0]) if row else 0.0
 
+    @_locked
     def total_size(self) -> int:
         row = self._conn_or_raise().execute(
             "SELECT COALESCE(SUM(file_size), 0) FROM tracks"
         ).fetchone()
         return int(row[0]) if row else 0
 
+    @_locked
     def recently_added(self, limit: int = 50) -> list[TrackRecord]:
         rows = self._conn_or_raise().execute(
             """SELECT track_id, album_id, path, title, artist,
@@ -833,6 +876,7 @@ class LibraryDatabase:
 
     # -- playlists --
 
+    @_locked
     def create_playlist(self, name: str, *, is_smart: bool = False, rule_json: str = "") -> int:
         conn = self._conn_or_raise()
         now = int(time.time())
@@ -846,6 +890,7 @@ class LibraryDatabase:
             row = conn.execute("SELECT playlist_id FROM playlists WHERE name = ?", (name,)).fetchone()
             return int(row[0]) if row else -1
 
+    @_locked
     def delete_playlist(self, playlist_id: int) -> None:
         with self._lock:
             self._conn_or_raise().execute("DELETE FROM playlist_tracks WHERE playlist_id = ?", (playlist_id,))
@@ -853,6 +898,7 @@ class LibraryDatabase:
             if self._batch_depth == 0:
                 self._conn_or_raise().commit()
 
+    @_locked
     def rename_playlist(self, playlist_id: int, new_name: str) -> None:
         with self._lock:
             self._conn_or_raise().execute(
@@ -862,6 +908,7 @@ class LibraryDatabase:
             if self._batch_depth == 0:
                 self._conn_or_raise().commit()
 
+    @_locked
     def list_playlists(self) -> list[dict[str, Any]]:
         rows = self._conn_or_raise().execute(
             "SELECT playlist_id, name, is_smart, rule_json, (SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id = p.playlist_id) FROM playlists p ORDER BY name"
@@ -875,6 +922,7 @@ class LibraryDatabase:
             for r in rows
         ]
 
+    @_locked
     def add_track_to_playlist(self, playlist_id: int, track_path: str) -> None:
         normalized = _normalize_path(track_path)
         with self._lock:
@@ -889,6 +937,7 @@ class LibraryDatabase:
             if self._batch_depth == 0:
                 self._conn_or_raise().commit()
 
+    @_locked
     def remove_track_from_playlist(self, playlist_id: int, track_path: str) -> None:
         normalized = _normalize_path(track_path)
         with self._lock:
@@ -899,6 +948,7 @@ class LibraryDatabase:
             if self._batch_depth == 0:
                 self._conn_or_raise().commit()
 
+    @_locked
     def get_playlist_tracks(self, playlist_id: int) -> list[str]:
         rows = self._conn_or_raise().execute(
             "SELECT track_path FROM playlist_tracks WHERE playlist_id = ? ORDER BY sort_order",
@@ -906,6 +956,7 @@ class LibraryDatabase:
         ).fetchall()
         return [str(r[0]) for r in rows]
 
+    @_locked
     def get_playlist_track_records(self, playlist_id: int) -> list[TrackRecord]:
         rows = self._conn_or_raise().execute(
             """SELECT t.track_id, t.album_id, t.path, t.title, t.artist,
@@ -921,6 +972,7 @@ class LibraryDatabase:
         ).fetchall()
         return [self._row_to_track(r) for r in rows]
 
+    @_locked
     def clear_playlist(self, playlist_id: int) -> None:
         with self._lock:
             self._conn_or_raise().execute(
@@ -931,6 +983,7 @@ class LibraryDatabase:
 
     # -- helpers --
 
+    @_locked
     def _update_album_track_count(self, album_id: int) -> None:
         conn = self._conn_or_raise()
         row = conn.execute(
