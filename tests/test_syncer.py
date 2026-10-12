@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from musicorg.core.syncer import (
+    SYNC_MATCH_ALBUM_SLOT,
     SYNC_MATCH_EXACT_HASH,
     SYNC_MATCH_IDENTITY,
     SYNC_MATCH_PATH,
@@ -760,3 +761,82 @@ def test_execute_sync_sets_path_match_reason_when_destination_exists(tmp_path):
 
     assert result.items[0].status == "exists"
     assert result.items[0].match_reason == SYNC_MATCH_PATH
+
+
+def _plan_with_tags(tmp_path, src_tags: TagData, dst_tags: TagData, **mgr_kwargs):
+    """Plan a one-file sync where source and dest differ in name and content."""
+    source = tmp_path / "source"
+    dest = tmp_path / "dest"
+    src_song = source / "rip_b" / "src_file.flac"
+    dst_song = dest / "Some Artist" / "Some Album" / "dst_file.flac"
+    for path, data in ((src_song, b"src-bytes"), (dst_song, b"dst-other-bytes")):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+
+    def run() -> SyncPlan:
+        mgr = SyncManager(path_format="$albumartist/$album/$track $title", **mgr_kwargs)
+        mgr._tag_manager.read = (  # type: ignore[method-assign]
+            lambda path: src_tags if path == src_song else dst_tags
+        )
+        return mgr.plan_sync(source, dest)
+
+    return run
+
+
+_SLOT_DST = TagData(
+    title="Pray 4 Me", artist="SAINt JHN", albumartist="SAINt JHN",
+    album="While the World Was Burning", track=7, disc=1, duration=173.0,
+)
+
+
+def _slot_src(**overrides) -> TagData:
+    fields = dict(
+        title="Pray 4 Me (feat. Kanye West)", artist="SAINt JHN", albumartist="Saint Jhn",
+        album="While The World Was Burning", track=7, disc=1, duration=173.4,
+    )
+    fields.update(overrides)
+    return TagData(**fields)
+
+
+def test_plan_sync_album_slot_match_when_title_differs(tmp_path):
+    plan = _plan_with_tags(tmp_path, _slot_src(), _SLOT_DST)()
+    assert plan.items[0].status == "exists"
+    assert plan.items[0].match_reason == SYNC_MATCH_ALBUM_SLOT
+
+
+def test_plan_sync_album_slot_treats_missing_disc_as_disc_one(tmp_path):
+    plan = _plan_with_tags(tmp_path, _slot_src(disc=0), _SLOT_DST)()
+    assert plan.items[0].match_reason == SYNC_MATCH_ALBUM_SLOT
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"duration": 176.5},          # outside the 2 second tolerance
+        {"track": 8},
+        {"disc": 2},
+        {"album": "Collection One"},
+        {"albumartist": "Someone Else", "artist": "Someone Else"},
+        {"track": 0},                 # no track number: never slot-match
+        {"duration": 0.0},            # no duration: never slot-match
+    ],
+)
+def test_plan_sync_album_slot_does_not_match(tmp_path, overrides):
+    plan = _plan_with_tags(tmp_path, _slot_src(**overrides), _SLOT_DST)()
+    assert plan.items[0].status == "pending"
+    assert plan.items[0].match_reason == ""
+
+
+def test_plan_sync_album_slot_ignores_untagged_destination(tmp_path):
+    plan = _plan_with_tags(tmp_path, _slot_src(track=0, duration=0.0), TagData())()
+    assert plan.items[0].status == "pending"
+
+
+def test_plan_sync_album_slot_match_uses_identity_db_on_second_run(tmp_path):
+    run = _plan_with_tags(
+        tmp_path, _slot_src(), _SLOT_DST, identity_db_path=tmp_path / "identity.db"
+    )
+    run()  # first run records the destination file in the identity index
+    plan = run()  # second run takes destination data from the index, not from tags
+    assert plan.items[0].status == "exists"
+    assert plan.items[0].match_reason == SYNC_MATCH_ALBUM_SLOT

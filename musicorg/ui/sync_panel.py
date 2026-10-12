@@ -38,6 +38,7 @@ MATCH_REASON_LABELS = {
     "track_uid": "Track UID",
     "identity_key": "Identity Key",
     "exact_hash": "Exact Hash",
+    "album_slot": "Album Slot + Duration",
 }
 
 

@@ -25,6 +25,11 @@ SYNC_MATCH_PATH = "path"
 SYNC_MATCH_TRACK_UID = "track_uid"
 SYNC_MATCH_IDENTITY = "identity_key"
 SYNC_MATCH_EXACT_HASH = "exact_hash"
+SYNC_MATCH_ALBUM_SLOT = "album_slot"
+
+# Two rips of one master differ by well under this; adjacent tracks rarely collide
+# because disc and track number must also agree.
+_SLOT_DURATION_TOLERANCE = 2.0  # seconds
 
 
 @dataclass
@@ -248,6 +253,36 @@ def _identity_candidates(path: Path, tags: dict) -> set[tuple[str, str, str]]:
     return candidates
 
 
+def _album_slot(tags: dict) -> tuple[tuple[str, str, int, int], float] | None:
+    """((artist, album, disc, track), duration) for title-agnostic matching.
+
+    None unless artist, album, track number and duration are all known, so
+    untagged files can never match each other.
+    """
+    try:
+        track = int(tags.get("track") or 0)
+        disc = int(tags.get("disc") or 0) or 1
+        duration = float(tags.get("duration") or 0.0)
+    except (TypeError, ValueError):
+        return None
+    artist = _normalize_identity_component(tags.get("albumartist") or tags.get("artist") or "")
+    album = _normalize_identity_component(tags.get("album") or "")
+    if not (artist and album and track > 0 and duration > 0):
+        return None
+    return (artist, album, disc, track), duration
+
+
+def _album_slot_from_strict_key(strict_key: str) -> tuple[tuple[str, str, int, int], float] | None:
+    """Album slot from a stored artist||album||title||track||disc||duration key."""
+    parts = (strict_key or "").split("||")
+    if len(parts) != 6:
+        return None
+    return _album_slot({
+        "artist": parts[0], "album": parts[1],
+        "track": parts[3], "disc": parts[4], "duration": parts[5],
+    })
+
+
 def _identity_candidates_from_loose_key(loose_key: str) -> set[tuple[str, str, str]]:
     """Expand a stored loose key into direct + partial match tuples."""
     parts = (loose_key or "").split("||")
@@ -390,6 +425,7 @@ class _PlanContext:
     dest_hash_buckets_loaded: set = field(default_factory=set)
     source_hash_cache: dict = field(default_factory=dict)
     dest_hash_cache: dict = field(default_factory=dict)
+    dest_album_slots: dict = field(default_factory=dict)
 
 
 class SyncManager:
@@ -513,6 +549,12 @@ class SyncManager:
                             ctx.dest_hashes_by_size_ext.setdefault(bucket, set()).add(record.content_sha1)
                         candidates.update(_identity_candidates_from_loose_key(record.loose_identity_key))
 
+            slot = _album_slot(dest_tags)
+            if slot is None and record is not None:
+                slot = _album_slot_from_strict_key(record.strict_identity_key)
+            if slot is not None:
+                ctx.dest_album_slots.setdefault(slot[0], []).append(slot[1])
+
             ctx.dest_tag_cache[af.path] = dest_tags
             ctx.dest_identity_candidates_by_path[af.path] = candidates
             ctx.dest_identity_set.update(candidates)
@@ -620,6 +662,9 @@ class SyncManager:
                 elif source_candidates & ctx.dest_identity_set:
                     item.status = "exists"
                     item.match_reason = SYNC_MATCH_IDENTITY
+                elif self._album_slot_on_dest(ctx, source_tags):
+                    item.status = "exists"
+                    item.match_reason = SYNC_MATCH_ALBUM_SLOT
                 else:
                     source_sha = _get_or_compute_sha1(
                         af.path,
@@ -650,6 +695,18 @@ class SyncManager:
             batch_start = batch_end
 
         return step
+
+    @staticmethod
+    def _album_slot_on_dest(ctx: _PlanContext, source_tags: dict) -> bool:
+        """True when dest has the same album/disc/track with a matching duration."""
+        slot = _album_slot(source_tags)
+        if slot is None:
+            return False
+        key, duration = slot
+        return any(
+            abs(duration - other) <= _SLOT_DURATION_TOLERANCE
+            for other in ctx.dest_album_slots.get(key, ())
+        )
 
     def _scan_reverse(
         self,
