@@ -107,7 +107,7 @@ class TemplateRenameDialog(QDialog):
         if not template:
             self._items = []
             self._populate_table()
-            self._set_status(f"Enter a template to preview renames for {len(self._paths)} files.", False)
+            self._set_status(f"Enter a template to preview renames for {len(self._paths)} files.", is_error=False)
             return
 
         try:
@@ -120,9 +120,9 @@ class TemplateRenameDialog(QDialog):
 
         self._populate_table()
         if self._items:
-            self._set_status(f"{len(self._items)} files will be renamed.", False)
+            self._set_status(f"{len(self._items)} files will be renamed.", is_error=False)
         else:
-            self._set_status("No files would be renamed with this template.", False)
+            self._set_status("No files would be renamed with this template.", is_error=False)
 
     def _populate_table(self) -> None:
         self._preview_table.setRowCount(len(self._items))
