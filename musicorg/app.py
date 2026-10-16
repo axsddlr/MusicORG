@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QApplication
 
 from musicorg.config.settings import AppSettings
 from musicorg.runtime_paths import asset_path, builtin_themes_root, is_frozen, package_root
+from musicorg.plugins.runtime import PluginRuntime
 from musicorg.ui.main_window import MainWindow
 from musicorg.ui.themes.registry import ThemeRegistry
 from musicorg.ui.themes.service import ThemeService
@@ -67,7 +68,8 @@ def run_app() -> int:
     theme_service.apply_startup_theme()
 
     # Create and show main window
-    window = MainWindow(settings, theme_service=theme_service)
+    plugin_runtime = PluginRuntime(settings)
+    window = MainWindow(settings, theme_service=theme_service, plugin_runtime=plugin_runtime)
     if icon_path.exists():
         window.setWindowIcon(QIcon(str(icon_path)))
     window.show()

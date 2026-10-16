@@ -23,6 +23,7 @@ from musicorg.ui.keybindings import (
     create_bound_action,
 )
 from musicorg.ui.library_tools_dialog import LibraryToolsDialog
+from musicorg.ui.plugins_dialog import PluginManagerDialog
 from musicorg.ui.quicktag_panel import QuickTagPanel
 from musicorg.ui.raw_files_panel import RawFilesPanel
 from musicorg.ui.settings_dialog import SettingsDialog
@@ -40,16 +41,27 @@ from musicorg.ui.widgets.status_strip import StatusStrip
 
 if TYPE_CHECKING:
     from musicorg.config.settings import AppSettings
+    from musicorg.plugins.runtime import PluginRuntime
     from musicorg.ui.themes.service import ThemeService
 
 
 class MainWindow(QMainWindow):
     """Main application window with sidebar navigation."""
 
-    def __init__(self, settings: AppSettings, theme_service: ThemeService | None = None) -> None:
+    def __init__(
+        self,
+        settings: AppSettings,
+        theme_service: ThemeService | None = None,
+        plugin_runtime: PluginRuntime | None = None,
+    ) -> None:
         super().__init__()
         self._settings = settings
         self._theme_service = theme_service
+        self._plugin_runtime = plugin_runtime
+        self._tools_menu = None
+        self._plugin_page_widgets: list[QWidget] = []
+        self._plugin_tool_actions: list[tuple[QAction, bool]] = []
+        self._plugin_bottom_widgets: list[QWidget] = []
         self._tag_editor_action: QAction | None = None
         self._autotag_action: QAction | None = None
         self._artwork_action: QAction | None = None
@@ -84,6 +96,7 @@ class MainWindow(QMainWindow):
         self._setup_menu()
         self._connect_panels()
         self._restore_state()
+        self._reload_plugins()
 
     def _open_library_db(self) -> LibraryDatabase | None:
         try:
@@ -160,6 +173,14 @@ class MainWindow(QMainWindow):
 
         outer.addLayout(content_row, 1)
 
+        self._plugin_bottom_container = QWidget()
+        self._plugin_bottom_container.setObjectName("PluginBottomContainer")
+        self._plugin_bottom_layout = QVBoxLayout(self._plugin_bottom_container)
+        self._plugin_bottom_layout.setContentsMargins(6, 0, 6, 0)
+        self._plugin_bottom_layout.setSpacing(6)
+        self._plugin_bottom_container.setVisible(False)
+        outer.addWidget(self._plugin_bottom_container)
+
         self._status_strip = StatusStrip()
         outer.addWidget(self._status_strip)
 
@@ -213,8 +234,12 @@ class MainWindow(QMainWindow):
         theme_action = QAction("&Themes...", self)
         theme_action.triggered.connect(self._open_themes)
         settings_menu.addAction(theme_action)
+        plugins_action = QAction("&Plugins...", self)
+        plugins_action.triggered.connect(self._open_plugins)
+        settings_menu.addAction(plugins_action)
 
         tools_menu = menubar.addMenu("&Tools")
+        self._tools_menu = tools_menu
         self._tag_editor_action = create_bound_action(
             parent=self,
             text="Open &Tag Editor",
@@ -313,6 +338,8 @@ class MainWindow(QMainWindow):
                 selected,
             )
         )
+        self._source_panel.selection_stats_changed.connect(self._on_selection_stats_changed)
+        self._source_panel.scan_completed.connect(self._on_scan_completed)
         self._source_panel.album_artwork_changed.connect(self._backdrop.set_artwork)
         self._raw_files_panel.send_to_editor_requested.connect(self._send_to_editor)
         self._raw_files_panel.send_to_autotag_requested.connect(self._send_to_autotag)
@@ -342,6 +369,8 @@ class MainWindow(QMainWindow):
         self._spotify_features_panel.tags_applied.connect(
             lambda: self._status_strip.show_message("Audio features applied")
         )
+        if self._theme_service is not None:
+            self._theme_service.theme_changed.connect(self._on_theme_changed)
 
     def _on_library_selection_stats_changed(
         self,
@@ -417,6 +446,8 @@ class MainWindow(QMainWindow):
             self._spotify_features_action.setEnabled(enabled)
         if self._template_rename_action is not None:
             self._template_rename_action.setEnabled(enabled)
+        for action, requires_selection in self._plugin_tool_actions:
+            action.setEnabled(enabled if requires_selection else True)
 
     def _send_to_editor(self, paths: list[Path]) -> None:
         if paths:
@@ -638,12 +669,137 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Shortcut Conflict", str(e))
                 return
 
+    def _open_plugins(self) -> None:
+        if self._plugin_runtime is None:
+            self._status_strip.show_message("Plugin runtime is not available", 2600)
+            return
+        dialog = PluginManagerDialog(
+            runtime=self._plugin_runtime,
+            settings=self._settings,
+            on_reload_requested=self._reload_plugins,
+            parent=self,
+        )
+        dialog.exec()
+
+    def _reload_plugins(self) -> None:
+        if self._plugin_runtime is None:
+            return
+        self._clear_plugin_ui_contributions()
+        self._plugin_runtime.shutdown()
+        self._plugin_runtime.start(self)
+        self._apply_plugin_ui_contributions()
+        errors = self._plugin_runtime.load_errors()
+        if errors:
+            self._status_strip.show_message(
+                f"Plugins loaded with {len(errors)} diagnostic entries",
+                4200,
+            )
+
+    def _clear_plugin_ui_contributions(self) -> None:
+        for widget in self._plugin_page_widgets:
+            self._stack.removeWidget(widget)
+            widget.deleteLater()
+        self._plugin_page_widgets = []
+
+        for action, _requires_selection in self._plugin_tool_actions:
+            if self._tools_menu is not None:
+                self._tools_menu.removeAction(action)
+            action.deleteLater()
+        self._plugin_tool_actions = []
+
+        for widget in self._plugin_bottom_widgets:
+            self._plugin_bottom_layout.removeWidget(widget)
+            widget.deleteLater()
+        self._plugin_bottom_widgets = []
+        self._plugin_bottom_container.setVisible(False)
+
+    def _apply_plugin_ui_contributions(self) -> None:
+        if self._plugin_runtime is None:
+            return
+        page_entries = sorted(
+            self._plugin_runtime.sidebar_page_entries(),
+            key=lambda item: (item[1].order, item[1].title.lower()),
+        )
+        nav_items = list(SidebarNav.BASE_ITEMS)
+        for plugin_id, page_spec in page_entries:
+            try:
+                widget = page_spec.widget_factory(self._stack)
+            except Exception as exc:
+                self._status_strip.show_message(
+                    f"Plugin page failed ({plugin_id}): {exc}",
+                    4200,
+                )
+                continue
+            self._plugin_page_widgets.append(widget)
+            self._stack.addWidget(widget)
+            nav_items.append((page_spec.icon or "\u25ba", page_spec.title))
+
+        self._sidebar.set_items(nav_items)
+        if self._stack.currentIndex() >= len(nav_items):
+            self._sidebar.set_selected(0)
+            self._on_nav_changed(0)
+        else:
+            self._sidebar.set_selected(self._stack.currentIndex())
+
+        if self._tools_menu is not None:
+            for _plugin_id, action_spec in self._plugin_runtime.tool_action_entries():
+                action = QAction(action_spec.text, self)
+                action.triggered.connect(action_spec.callback)
+                self._tools_menu.addAction(action)
+                self._plugin_tool_actions.append((action, action_spec.requires_selection))
+
+        bottom_entries = sorted(
+            self._plugin_runtime.bottom_bar_entries(),
+            key=lambda item: item[1].order,
+        )
+        for plugin_id, bar_spec in bottom_entries:
+            try:
+                widget = bar_spec.widget_factory(self._plugin_bottom_container)
+            except Exception as exc:
+                self._status_strip.show_message(
+                    f"Plugin bottom bar failed ({plugin_id}): {exc}",
+                    4200,
+                )
+                continue
+            widget.setParent(self._plugin_bottom_container)
+            self._plugin_bottom_layout.addWidget(widget)
+            self._plugin_bottom_widgets.append(widget)
+        self._plugin_bottom_container.setVisible(bool(self._plugin_bottom_widgets))
+        self._refresh_tools_and_status_for_active_panel()
+
+    def _on_selection_stats_changed(self, total: int, selected: int) -> None:
+        if self._plugin_runtime is None:
+            return
+        self._plugin_runtime.emit_event(
+            "selection.changed",
+            {"total": total, "selected": selected},
+        )
+
+    def _on_scan_completed(self, count: int) -> None:
+        if self._plugin_runtime is None:
+            return
+        self._plugin_runtime.emit_event("scan.completed", {"count": count})
+
+    def _on_theme_changed(self, theme_id: str) -> None:
+        if self._plugin_runtime is None:
+            return
+        self._plugin_runtime.emit_event("theme.changed", {"theme_id": theme_id})
+
+    # PluginHostApi surface used by PluginContext.
+    def get_selected_paths(self) -> list[Path]:
+        return self._selected_paths_for_tools()
+
+    def show_status_message(self, message: str, timeout_ms: int = 2500) -> None:
+        self._status_strip.show_message(message, timeout_ms)
+
     def _restore_state(self) -> None:
         geo = self._settings.window_geometry
         if geo:
             self.restoreGeometry(geo)
 
     def closeEvent(self, event) -> None:
+        if self._plugin_runtime is not None:
+            self._plugin_runtime.shutdown()
         self._source_panel.shutdown()
         self._tag_editor_panel.shutdown()
         self._autotag_panel.shutdown()

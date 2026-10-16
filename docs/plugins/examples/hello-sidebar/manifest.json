@@ -1,0 +1,11 @@
+{
+  "schema_version": "1",
+  "plugin_id": "hello-sidebar",
+  "name": "Hello Sidebar",
+  "version": "0.1.0",
+  "author": "MusicOrg Docs",
+  "description": "Example plugin that adds one sidebar page.",
+  "target_app_min": "0.5.0",
+  "entrypoint": "plugin:Plugin",
+  "capabilities": ["ui.sidebar_page"]
+}

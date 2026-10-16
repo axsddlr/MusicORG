@@ -53,6 +53,7 @@ class SourcePanel(QWidget):
     send_to_autotag_requested = Signal(list)
     send_to_artwork_requested = Signal(list)
     selection_stats_changed = Signal(int, int)  # total, selected
+    scan_completed = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -527,6 +528,7 @@ class SourcePanel(QWidget):
         self._last_scanned_path = self._scan_target_path
         self._emit_selection_stats()
         self._setup_folder_watch(self._last_scanned_path)
+        self.scan_completed.emit(len(self._all_rows))
         self._run_pending_auto_scan()
 
     def _populate_library_db(self) -> None:

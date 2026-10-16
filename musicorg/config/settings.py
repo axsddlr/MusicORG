@@ -179,6 +179,90 @@ class AppSettings:
                 cleaned[key] = item
         self._qs.setValue("ui/keybind_overrides", cleaned)
 
+    # -- plugins --
+
+    @property
+    def plugins_safe_mode(self) -> bool:
+        return self._qs.value("plugins/safe_mode", False, type=bool)
+
+    @plugins_safe_mode.setter
+    def plugins_safe_mode(self, value: bool) -> None:
+        self._qs.setValue("plugins/safe_mode", bool(value))
+
+    @property
+    def plugins_dir(self) -> str:
+        raw = self._qs.value("plugins/dir", "", type=str)
+        return (raw or "").strip()
+
+    @plugins_dir.setter
+    def plugins_dir(self, value: str) -> None:
+        self._qs.setValue("plugins/dir", (value or "").strip())
+
+    @property
+    def plugin_enabled_map(self) -> dict[str, bool]:
+        raw = self._qs.value("plugins/enabled", {})
+        if not isinstance(raw, Mapping):
+            return {}
+        cleaned: dict[str, bool] = {}
+        for key, value in raw.items():
+            if isinstance(key, str):
+                cleaned[key] = bool(value)
+        return cleaned
+
+    @plugin_enabled_map.setter
+    def plugin_enabled_map(self, value: Mapping[str, object]) -> None:
+        cleaned: dict[str, bool] = {}
+        for key, item in value.items():
+            if isinstance(key, str):
+                cleaned[key] = bool(item)
+        self._qs.setValue("plugins/enabled", cleaned)
+
+    @property
+    def plugin_crash_counters(self) -> dict[str, int]:
+        raw = self._qs.value("plugins/crash_counters", {})
+        if not isinstance(raw, Mapping):
+            return {}
+        cleaned: dict[str, int] = {}
+        for key, value in raw.items():
+            if not isinstance(key, str):
+                continue
+            try:
+                cleaned[key] = max(0, int(value))
+            except (TypeError, ValueError):
+                cleaned[key] = 0
+        return cleaned
+
+    @plugin_crash_counters.setter
+    def plugin_crash_counters(self, value: Mapping[str, object]) -> None:
+        cleaned: dict[str, int] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                continue
+            try:
+                cleaned[key] = max(0, int(item))
+            except (TypeError, ValueError):
+                cleaned[key] = 0
+        self._qs.setValue("plugins/crash_counters", cleaned)
+
+    @property
+    def plugin_startup_timeout_ms(self) -> int:
+        value = self._qs.value("plugins/startup_timeout_ms", 4000, type=int)
+        return max(250, int(value))
+
+    @plugin_startup_timeout_ms.setter
+    def plugin_startup_timeout_ms(self, value: int) -> None:
+        self._qs.setValue("plugins/startup_timeout_ms", max(250, int(value)))
+
+    def plugin_get_setting(self, plugin_id: str, key: str, default: object | None = None) -> object:
+        safe_plugin_id = self._sanitize_plugin_id(plugin_id)
+        safe_key = self._sanitize_plugin_key(key)
+        return self._qs.value(f"plugins/data/{safe_plugin_id}/{safe_key}", default)
+
+    def plugin_set_setting(self, plugin_id: str, key: str, value: object) -> None:
+        safe_plugin_id = self._sanitize_plugin_id(plugin_id)
+        safe_key = self._sanitize_plugin_key(key)
+        self._qs.setValue(f"plugins/data/{safe_plugin_id}/{safe_key}", value)
+
     # -- window geometry --
 
     @property
@@ -215,8 +299,42 @@ class AppSettings:
         except OSError:
             return self.default_themes_dir
 
+    @property
+    def default_plugins_dir(self) -> Path:
+        path = self.app_data_dir / "plugins"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def plugins_dir_path(self) -> Path:
+        custom = self.plugins_dir
+        if not custom:
+            return self.default_plugins_dir
+        try:
+            path = Path(custom).expanduser()
+            path.mkdir(parents=True, exist_ok=True)
+            return path
+        except OSError:
+            return self.default_plugins_dir
+
     @staticmethod
     def _app_data_dir() -> Path:
         import os
         base = Path(os.environ.get("APPDATA", Path.home() / ".config"))
         return base / "musicorg"
+
+    @staticmethod
+    def _sanitize_plugin_id(value: str) -> str:
+        cleaned = (value or "").strip().lower()
+        if not cleaned:
+            return "unknown-plugin"
+        normalized = "".join(ch for ch in cleaned if ch.isalnum() or ch in {"-", "_"})
+        return normalized or "unknown-plugin"
+
+    @staticmethod
+    def _sanitize_plugin_key(value: str) -> str:
+        cleaned = (value or "").strip()
+        if not cleaned:
+            return "value"
+        normalized = "".join(ch for ch in cleaned if ch.isalnum() or ch in {"-", "_", "."})
+        return normalized or "value"

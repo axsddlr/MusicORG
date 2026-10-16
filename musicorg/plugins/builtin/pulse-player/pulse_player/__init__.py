@@ -1,0 +1,1 @@
+"""Pulse player plugin package."""

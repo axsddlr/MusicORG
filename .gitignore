@@ -70,7 +70,8 @@ AGENTS.md
 CLAUDE.md
 
 # Local plugin runtime bundle (binary/vendor artifacts)
-musicorg/plugins/
+musicorg/plugins/builtin/pulse-player/site-packages/
+musicorg/plugins/builtin/pulse-player/bin/
 
 # Temporary PyInstaller spec generated in repo root during local builds
 /MusicOrg.spec

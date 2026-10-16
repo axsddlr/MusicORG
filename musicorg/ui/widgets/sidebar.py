@@ -71,7 +71,7 @@ class SidebarNav(QFrame):
 
     page_changed = Signal(int)
 
-    _NAV_ITEMS = [
+    BASE_ITEMS = [
         ("\uE8B7", "Source"),
         ("\uE895", "Sync"),
         ("\uE8C8", "Duplicates"),
@@ -102,23 +102,43 @@ class SidebarNav(QFrame):
         layout.addWidget(section)
 
         # Navigation items
+        self._items_layout = QVBoxLayout()
+        self._items_layout.setContentsMargins(0, 0, 0, 0)
+        self._items_layout.setSpacing(0)
+        layout.addLayout(self._items_layout)
         self._nav_items: list[NavItem] = []
-        for i, (icon, label) in enumerate(self._NAV_ITEMS):
-            item = NavItem(icon, label)
-            item.clicked.connect(lambda idx=i: self._on_item_clicked(idx))
-            self._nav_items.append(item)
-            layout.addWidget(item)
+        self._selected_index = 0
+        self.set_items(self.BASE_ITEMS)
 
         layout.addStretch(1)
-
-        # Select first item by default
-        if self._nav_items:
-            self._nav_items[0].set_selected(True)
 
     def _on_item_clicked(self, index: int) -> None:
         self.set_selected(index)
         self.page_changed.emit(index)
 
+    def set_items(self, items: list[tuple[str, str]] | tuple[tuple[str, str], ...]) -> None:
+        while self._nav_items:
+            item = self._nav_items.pop()
+            self._items_layout.removeWidget(item)
+            item.deleteLater()
+        for i, (icon, label) in enumerate(items):
+            item = NavItem(icon, label)
+            item.clicked.connect(lambda idx=i: self._on_item_clicked(idx))
+            self._nav_items.append(item)
+            self._items_layout.addWidget(item)
+        if not self._nav_items:
+            self._selected_index = 0
+            return
+        self._selected_index = min(max(self._selected_index, 0), len(self._nav_items) - 1)
+        self.set_selected(self._selected_index)
+
+    def selected_index(self) -> int:
+        return self._selected_index
+
     def set_selected(self, index: int) -> None:
+        if not self._nav_items:
+            self._selected_index = 0
+            return
+        self._selected_index = min(max(index, 0), len(self._nav_items) - 1)
         for i, item in enumerate(self._nav_items):
-            item.set_selected(i == index)
+            item.set_selected(i == self._selected_index)
