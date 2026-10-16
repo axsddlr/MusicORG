@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import json
+import logging
 from pathlib import Path
+import time
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -13,7 +17,7 @@ class AutoTagProfile:
     name: str = ""
     enabled_sources: list[str] = field(default_factory=lambda: ["MusicBrainz"])
     overwrite_fields: list[str] | None = None  # None = all fields
-    fill_empty_only: bool = True
+    fill_empty_only: bool = False
     regex_cleanup_pattern: str = ""
     regex_cleanup_replacement: str = ""
     move_successful_to: str = ""
@@ -45,7 +49,7 @@ class AutoTagProfile:
             name=str(data.get("name", "")),
             enabled_sources=list(data.get("enabled_sources", ["MusicBrainz"])),
             overwrite_fields=list(raw_fields) if raw_fields else None,
-            fill_empty_only=bool(data.get("fill_empty_only", True)),
+            fill_empty_only=bool(data.get("fill_empty_only", False)),
             regex_cleanup_pattern=str(data.get("regex_cleanup_pattern", "")),
             regex_cleanup_replacement=str(data.get("regex_cleanup_replacement", "")),
             move_successful_to=str(data.get("move_successful_to", "")),
@@ -125,6 +129,13 @@ class ProfileStore:
             data = json.loads(path.read_text(encoding="utf-8"))
             return [AutoTagProfile.from_dict(p) for p in data]
         except Exception:
+            # Move the unreadable file aside so the next save can't destroy it.
+            aside = path.with_name(f"{path.stem}.corrupt-{time.strftime('%Y%m%d-%H%M%S')}.json")
+            try:
+                path.replace(aside)
+                logger.warning("Corrupt autotag profiles file moved to %s", aside, exc_info=True)
+            except OSError:
+                logger.warning("Corrupt autotag profiles file %s could not be moved aside", path, exc_info=True)
             return [AutoTagProfile(name="Default", enabled_sources=["MusicBrainz"])]
 
     def save_autotag_profiles(self, profiles: list[AutoTagProfile]) -> None:

@@ -17,6 +17,8 @@ from musicorg.core.tagger import TagData, TagManager
 from musicorg.errors import ErrorCode, MusicOrgError
 
 logger = logging.getLogger(__name__)
+# Fields an Auto-Tag match supplies (genre and artwork are handled separately in _write_tags).
+_MATCH_FIELDS = ("title", "artist", "album", "albumartist", "track", "disc", "year")
 
 
 _UUID_RE = re.compile(
@@ -527,16 +529,27 @@ class AutoTagger:
         merge_genres: bool,
         id3_version: int,
     ) -> None:
-        """Single write point for every apply path (genre merge + ID3 version)."""
+        """Single write point for every apply path (genre merge + ID3 version).
+
+        Starts from the file's existing tags and replaces only the fields a match
+        provides, so composer/comment/lyrics/key/isrc survive. Artwork is only
+        touched when the caller supplies it (None = leave as is).
+        """
+        try:
+            existing = tag_writer.read(path)
+        except Exception:
+            logger.debug("Could not read existing tags from %s", path, exc_info=True)
+            existing = TagData()
+        genre = tag_data.genre
         if merge_genres:
-            try:
-                existing_genre = tag_writer.read(path).genre
-            except Exception:
-                logger.debug("Could not read existing genre from %s", path, exc_info=True)
-                existing_genre = ""
-            tag_data = replace(
-                tag_data, genre=_merge_genre_strings(existing_genre, tag_data.genre)
-            )
+            genre = _merge_genre_strings(existing.genre, genre)
+        tag_data = replace(
+            existing,
+            **{name: getattr(tag_data, name) for name in _MATCH_FIELDS},
+            genre=genre,
+            artwork_data=tag_data.artwork_data,
+            artwork_mime=tag_data.artwork_mime,
+        )
         tag_writer.write(path, tag_data, id3_version=id3_version)
 
     def _resolve_hints_from_files(

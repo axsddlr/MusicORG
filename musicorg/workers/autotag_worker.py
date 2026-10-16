@@ -120,7 +120,7 @@ class ApplyMatchWorker(BaseWorker):
         cache_db_path: str = "",
         discogs_token: str = "",
         overwrite_fields: list[str] | None = None,  # None = all fields, [] = nothing
-        fill_empty_only: bool = True,
+        fill_empty_only: bool = False,
         merge_genres: bool = False,
         id3_version: int = 4,
     ) -> None:

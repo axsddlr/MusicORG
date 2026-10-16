@@ -281,7 +281,7 @@ class AutoTagPanel(QDialog):
         self._overwrite_genre = QCheckBox("Genre"); self._overwrite_genre.setChecked(True)
         self._overwrite_artwork = QCheckBox("Artwork"); self._overwrite_artwork.setChecked(True)
         self._fill_empty = QCheckBox("Fill empty only")
-        self._fill_empty.setChecked(True)
+        self._fill_empty.setChecked(False)
         self._fill_empty.setToolTip("Only write fields that are currently empty")
 
         overwrite_layout.addWidget(self._overwrite_all)

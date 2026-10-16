@@ -35,3 +35,23 @@ def test_missing_new_keys_get_defaults():
     assert p.merge_genres is False
     assert p.id3_v23 is False
     assert AutoTagProfile().overwrite_fields is None
+
+
+def test_default_profile_does_not_fill_empty_only(tmp_path):
+    assert AutoTagProfile().fill_empty_only is False
+    assert ProfileStore(tmp_path).load_autotag_profiles()[0].fill_empty_only is False
+    assert AutoTagProfile.from_dict({"name": "S", "fill_empty_only": True}).fill_empty_only is True
+
+
+def test_corrupt_profiles_file_is_moved_aside(tmp_path, caplog):
+    store = ProfileStore(tmp_path)
+    bad = tmp_path / "autotag_profiles.json"
+    bad.write_text("{not json", encoding="utf-8")
+    with caplog.at_level("WARNING"):
+        loaded = store.load_autotag_profiles()
+    assert [p.name for p in loaded] == ["Default"]
+    assert "corrupt" in caplog.text.lower()
+    aside = list(tmp_path.glob("autotag_profiles.corrupt-*.json"))
+    assert len(aside) == 1 and aside[0].read_text(encoding="utf-8") == "{not json"
+    store.save_autotag_profiles(loaded)
+    assert aside[0].read_text(encoding="utf-8") == "{not json"
