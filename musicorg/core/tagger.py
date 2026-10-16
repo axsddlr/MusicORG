@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Self
 
 import music_tag
+from mutagen.id3 import ID3
 
 from musicorg.errors import (
     ErrorCode,
@@ -216,12 +217,13 @@ class TagManager:
             artwork_mime=artwork_mime,
         )
 
-    def write(self, path: str | Path, tags: TagData) -> None:
+    def write(self, path: str | Path, tags: TagData, id3_version: int = 4) -> None:
         """Write tags to an audio file.
         
         Args:
             path: Path to the audio file.
             tags: TagData object with tag values to write.
+            id3_version: 3 or 4; ID3v2 version for ID3-tagged files (ignored otherwise).
         
         Raises:
             MusicOrgError: If file cannot be written or tags are invalid.
@@ -279,7 +281,12 @@ class TagManager:
                         details={"original": str(exc)},
                     ) from exc
 
-            f.save()
+            if id3_version == 3 and isinstance(
+                getattr(getattr(f, "mfile", None), "tags", None), ID3
+            ):
+                f.save(v2_version=3)
+            else:
+                f.save()
         except MusicOrgError:
             raise
         except Exception as exc:
