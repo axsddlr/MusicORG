@@ -579,9 +579,9 @@ class SourcePanel(QWidget):
                     try:
                         self._fs_watcher.addPath(str(Path(dirpath) / d))
                     except Exception:
-                        pass
+                        _logger.debug("Could not watch subfolder %s", d, exc_info=True)
         except Exception:
-            pass
+            _logger.exception("Could not set up folder watch for %s", directory)
 
     def _on_watched_dir_changed(self, _path: str) -> None:
         self._sweep_timer.start()

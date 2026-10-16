@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from difflib import SequenceMatcher
@@ -12,6 +13,8 @@ from musicorg import __version__
 
 BEATPORT_SEARCH_URL = "https://www.beatport.com/search/tracks?q="
 BEATPORT_RELEASE_URL = "https://www.beatport.com/release/"
+
+logger = logging.getLogger(__name__)
 
 
 class BeatportClient:
@@ -99,7 +102,7 @@ class BeatportClient:
                     if track:
                         results.append(track)
         except Exception:
-            pass
+            logger.exception("Beatport search failed for %r", query)
         return results
 
     def _parse_track_bucket(self, item: Any) -> dict[str, Any] | None:

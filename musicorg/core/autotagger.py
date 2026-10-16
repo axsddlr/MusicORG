@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -14,6 +15,8 @@ from musicorg import __version__
 from musicorg.core.tag_options import merge_genres as _merge_genre_strings
 from musicorg.core.tagger import TagData, TagManager
 from musicorg.errors import ErrorCode, MusicOrgError
+
+logger = logging.getLogger(__name__)
 
 
 _UUID_RE = re.compile(
@@ -100,7 +103,7 @@ class AutoTagger:
             except Exception:
                 # Defer import/setup errors to search methods.
                 # Note: older musicbrainzngs versions don't support timeout parameter.
-                pass
+                logger.debug("MusicBrainz client setup deferred", exc_info=True)
 
     def search_album(
         self,
@@ -215,7 +218,7 @@ class AutoTagger:
                 if not title:
                     title = (tags.title or "").strip()
             except Exception:
-                pass
+                logger.debug("Could not read tag hints from %s", path, exc_info=True)
         if not artist and not title:
             return self._build_search_payload([], {})
 
@@ -230,6 +233,7 @@ class AutoTagger:
                 isrc_results = self._call_with_retry(self._search_item_mb_isrc, isrc.strip(), artist, title)
             except Exception:
                 # Silent fallback to text search; SearchDiagnostics has no notes field.
+                logger.exception("MusicBrainz ISRC lookup failed for %s", isrc)
                 isrc_results = []
         if "MusicBrainz" in sources:
             attempted_sources.append("MusicBrainz")
@@ -411,7 +415,7 @@ class AutoTagger:
                 if tags.track > 0:
                     track = tags.track
             except Exception:
-                pass
+                logger.debug("Could not read disc/track from %s", path_obj, exc_info=True)
             file_rows.append((disc, track, index, path_obj))
         file_rows.sort(key=lambda row: (row[0], row[1], row[2]))
 
@@ -430,6 +434,7 @@ class AutoTagger:
             try:
                 existing = tag_writer.read(path_obj)
             except Exception:
+                logger.debug("Could not read existing tags from %s", path_obj, exc_info=True)
                 existing = TagData()
 
             title = track_row.get("title", "")
@@ -485,6 +490,7 @@ class AutoTagger:
             try:
                 existing = tag_writer.read(path)
             except Exception:
+                logger.debug("Could not read existing tags from %s", path, exc_info=True)
                 existing = TagData()
 
             def _use(field: str, new_val: str | int) -> str | int:
@@ -526,6 +532,7 @@ class AutoTagger:
             try:
                 existing_genre = tag_writer.read(path).genre
             except Exception:
+                logger.debug("Could not read existing genre from %s", path, exc_info=True)
                 existing_genre = ""
             tag_data = replace(
                 tag_data, genre=_merge_genre_strings(existing_genre, tag_data.genre)
@@ -548,6 +555,7 @@ class AutoTagger:
             try:
                 tags = tm.read(raw_path)
             except Exception:
+                logger.debug("Could not read tags from %s", raw_path, exc_info=True)
                 continue
             if not artist:
                 artist = (tags.albumartist or tags.artist or "").strip()
@@ -579,7 +587,7 @@ class AutoTagger:
                     )
                     full_release = details.get("release", release)
                 except Exception:
-                    pass
+                    logger.exception("MusicBrainz release lookup failed for %s", release_id)
 
             release_group = full_release.get("release-group") or release.get("release-group") or {}
             release_group_id = release_group.get("id", "")
@@ -1059,7 +1067,7 @@ class AutoTagger:
                 if tags.track > 0:
                     track = tags.track
             except Exception:
-                pass
+                logger.debug("Could not read disc/track from %s", path_obj, exc_info=True)
             file_rows.append((disc, track, index, path_obj))
         file_rows.sort(key=lambda row: (row[0], row[1], row[2]))
 
@@ -1284,6 +1292,7 @@ class AutoTagger:
                             mime = "image/jpeg"
                         return data, mime
                 except Exception as exc:
+                    logger.debug("Artwork download attempt %d failed", attempt + 1, exc_info=True)
                     if attempt >= 2 or not cls._is_transient_network_error(exc):
                         break
                     time.sleep(0.25 * (attempt + 1))

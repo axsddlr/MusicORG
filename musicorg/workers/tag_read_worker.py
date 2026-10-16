@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from concurrent.futures import CancelledError, Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 import os
@@ -19,6 +20,9 @@ from musicorg.workers.base_worker import BaseWorker
 TagBatchEntry = tuple[Path, TagData | None]
 TagReadFailure = tuple[Path, str]
 CacheWriteEntry = tuple[Path, int, int, TagData]
+
+
+logger = logging.getLogger(__name__)
 
 
 class TagReadFinishedPayload(TypedDict):
@@ -100,6 +104,7 @@ class TagReadWorker(BaseWorker):
                     shared_cache = TagCache(self._cache_db_path)
                     shared_cache.open()
                 except Exception:
+                    logger.exception("Could not open shared tag cache %s", self._cache_db_path)
                     shared_cache = None
 
             max_workers = min(os.cpu_count() or 4, 8)
@@ -165,7 +170,7 @@ class TagReadWorker(BaseWorker):
                 try:
                     shared_cache.put_many(pending_cache_writes)
                 except Exception:
-                    pass
+                    logger.exception("Could not write tag cache entries")
             self.finished.emit(
                 self._build_finished_payload(
                     results=batch_results,
@@ -184,7 +189,7 @@ class TagReadWorker(BaseWorker):
                 try:
                     shared_cache.close()
                 except Exception:
-                    pass
+                    logger.debug("Could not close shared tag cache", exc_info=True)
 
     def _read_one(
         self,
@@ -211,6 +216,7 @@ class TagReadWorker(BaseWorker):
             try:
                 tag_data = thread_cache.get(path, modified_time_ns, file_size)
             except Exception:
+                logger.exception("Tag cache lookup failed for %s", path)
                 tag_data = None
 
         if tag_data is not None:
@@ -269,6 +275,7 @@ class TagReadWorker(BaseWorker):
                 thread_cache = TagCache(self._cache_db_path)
                 thread_cache.open()
             except Exception:
+                logger.exception("Could not open thread tag cache %s", self._cache_db_path)
                 thread_cache = None
 
         self._thread_local.cache = thread_cache
@@ -286,7 +293,7 @@ class TagReadWorker(BaseWorker):
             try:
                 thread_cache.close()
             except Exception:
-                pass
+                logger.debug("Could not close thread tag cache", exc_info=True)
 
     @staticmethod
     def _empty_payload() -> TagReadFinishedPayload:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from difflib import SequenceMatcher
@@ -11,6 +12,8 @@ from urllib.request import Request, urlopen
 from musicorg import __version__
 
 TRAXSOURCE_SEARCH_URL = "https://www.traxsource.com/search?term="
+
+logger = logging.getLogger(__name__)
 
 
 class TraxsourceClient:
@@ -94,7 +97,7 @@ class TraxsourceClient:
                     if track:
                         results.append(track)
         except Exception:
-            pass
+            logger.exception("Traxsource search failed for %r", query)
         return results
 
     def _parse_track_row(self, item: Any) -> dict[str, Any] | None:

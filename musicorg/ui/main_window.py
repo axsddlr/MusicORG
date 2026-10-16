@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -43,6 +44,9 @@ if TYPE_CHECKING:
     from musicorg.config.settings import AppSettings
     from musicorg.plugins.runtime import PluginRuntime
     from musicorg.ui.themes.service import ThemeService
+
+
+logger = logging.getLogger(__name__)
 
 
 class MainWindow(QMainWindow):
@@ -814,6 +818,6 @@ class MainWindow(QMainWindow):
             try:
                 self._library_db.close()
             except Exception:
-                pass
+                logger.debug("Library database close failed", exc_info=True)
         self._settings.window_geometry = self.saveGeometry()
         super().closeEvent(event)

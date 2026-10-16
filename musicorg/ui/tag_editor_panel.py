@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -28,6 +29,9 @@ from musicorg.workers.tag_write_worker import TagWriteFailure, TagWriteSummary, 
 
 if TYPE_CHECKING:
     from musicorg.core.library_db import LibraryDatabase
+
+
+logger = logging.getLogger(__name__)
 
 
 class TagEditorPanel(QDialog):
@@ -540,10 +544,11 @@ class TagEditorPanel(QDialog):
                         artwork_mime=db_tags["artwork_mime"],
                     )
             except Exception:
-                pass
+                logger.exception("Library DB tag lookup failed for %s", path)
         try:
             return self._tag_manager.read(path)
         except Exception:
+            logger.exception("Tag read failed for %s", path)
             return TagData()
 
     def _cleanup_thread(self) -> None:
@@ -573,13 +578,13 @@ class TagEditorPanel(QDialog):
             cache.open()
             cache.invalidate_many(paths)
         except Exception:
-            pass
+            logger.exception("Could not invalidate tag cache entries")
         finally:
             if cache:
                 try:
                     cache.close()
                 except Exception:
-                    pass
+                    logger.debug("Could not close tag cache", exc_info=True)
 
     def shutdown(self, timeout_ms: int = 3000) -> None:
         _ = timeout_ms

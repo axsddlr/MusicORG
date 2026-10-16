@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict
@@ -16,6 +17,9 @@ if TYPE_CHECKING:
 
 
 SearchMode = Literal["album", "single"]
+
+
+logger = logging.getLogger(__name__)
 
 
 class PreviewResult(TypedDict):
@@ -249,13 +253,13 @@ class ArtworkApplyWorker(BaseWorker):
             cache.open()
             cache.invalidate_many(paths)
         except Exception:
-            pass
+            logger.exception("Could not invalidate tag cache entries")
         finally:
             if cache is not None:
                 try:
                     cache.close()
                 except Exception:
-                    pass
+                    logger.debug("Could not close tag cache", exc_info=True)
 
     @staticmethod
     def _build_result(

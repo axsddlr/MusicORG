@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import functools
 import hashlib
+import logging
 import sqlite3
 import threading
 import time
@@ -105,6 +106,9 @@ CREATE TABLE IF NOT EXISTS playlist_tracks (
     PRIMARY KEY (playlist_id, track_path)
 );
 """
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -794,7 +798,7 @@ class LibraryDatabase:
                 import json
                 keys.update(json.loads(str(row[0] or "{}")).keys())
             except Exception:
-                pass
+                logger.exception("Invalid custom_tags JSON in library database")
         return sorted(keys)
 
     @_locked
@@ -809,6 +813,7 @@ class LibraryDatabase:
             import json
             return json.loads(str(row[0] or "{}"))
         except Exception:
+            logger.exception("Invalid custom_tags JSON for %s", normalized)
             return {}
 
     @_locked
