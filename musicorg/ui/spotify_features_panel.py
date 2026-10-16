@@ -6,13 +6,14 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
+    QCheckBox, QComboBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
     QLineEdit, QMessageBox, QPushButton, QVBoxLayout, QWidget,
 )
 
 from musicorg.core.spotify_features import (
     SPOTIFY_FEATURE_NAMES,
     FEATURE_LABELS,
+    FeatureMapping,
     SpotityFeaturesConfig,
 )
 from musicorg.ui.widgets.progress_bar import ProgressIndicator
@@ -78,6 +79,13 @@ class SpotifyFeaturesPanel(QDialog):
         search_layout.addWidget(self._artist_title_fallback)
         layout.addWidget(search_group)
 
+        key_form = QFormLayout()
+        self._key_notation_combo = QComboBox()
+        for label, data in (("Musical", "musical"), ("Camelot", "camelot"), ("Open Key", "open_key")):
+            self._key_notation_combo.addItem(label, data)
+        key_form.addRow("Key notation:", self._key_notation_combo)
+        layout.addLayout(key_form)
+
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         self._fetch_btn = QPushButton("Fetch & Apply Audio Features")
@@ -98,6 +106,9 @@ class SpotifyFeaturesPanel(QDialog):
         if not self._files:
             return
 
+        mappings = list(SpotityFeaturesConfig.DEFAULT_MAPPINGS)
+        if self._feature_checkboxes["key"].isChecked():
+            mappings.append(FeatureMapping(feature_name="key", tag_field="key"))
         config = SpotityFeaturesConfig(
             client_id=self._client_id_edit.text().strip(),
             client_secret=self._client_secret_edit.text().strip(),
@@ -107,7 +118,8 @@ class SpotifyFeaturesPanel(QDialog):
             ],
             search_by_isrc=self._isrc_checkbox.isChecked(),
             use_artist_title_fallback=self._artist_title_fallback.isChecked(),
-            feature_mappings=SpotityFeaturesConfig.DEFAULT_MAPPINGS,
+            feature_mappings=mappings,
+            key_notation=self._key_notation_combo.currentData(),
         )
 
         self._cleanup_thread()

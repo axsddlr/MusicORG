@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from musicorg.core.tag_options import key_from_pitch_class, to_camelot, to_open_key
 from musicorg.core.tagger import TagData, TagManager
 
 SPOTIFY_FEATURE_NAMES = (
@@ -39,6 +40,18 @@ FEATURE_LABELS: dict[str, str] = {
     "duration_ms": "Duration (ms)",
     "time_signature": "Time Signature",
 }
+
+
+def format_key(pitch: int, mode: int, notation: str = "musical") -> str:
+    """Spotify key/mode ints -> 'Am' (musical), '8A' (camelot) or '1m' (open_key); '' if unknown."""
+    key = key_from_pitch_class(pitch, mode)
+    if key is None:
+        return ""
+    if notation == "camelot":
+        return to_camelot(key) or ""
+    if notation == "open_key":
+        return to_open_key(key) or ""
+    return key
 
 
 @dataclass
@@ -85,6 +98,7 @@ class SpotityFeaturesConfig:
     feature_mappings: list[FeatureMapping] = field(default_factory=list)
     search_by_isrc: bool = True
     use_artist_title_fallback: bool = True
+    key_notation: str = "musical"  # musical | camelot | open_key
 
     DEFAULT_MAPPINGS: tuple[FeatureMapping, ...] = (
         FeatureMapping(
@@ -202,6 +216,8 @@ class SpotifyFeaturesFetcher:
         full = features[0]
         result: dict[str, Any] = {}
         valid = set(feature_names)
+        if "key" in valid:
+            valid.add("mode")  # key notation needs mode
         for name in SPOTIFY_FEATURE_NAMES:
             if name in valid and name in full:
                 result[name] = full[name]
@@ -216,6 +232,12 @@ class SpotifyFeaturesFetcher:
         for mapping in config.feature_mappings:
             value = features.get(mapping.feature_name, None)
             if value is None:
+                continue
+            if mapping.feature_name == "key":
+                mode = features.get("mode")
+                resolved[mapping.tag_field] = format_key(
+                    int(value), -1 if mode is None else int(mode), config.key_notation
+                )
                 continue
             resolved[mapping.tag_field] = mapping.resolve(float(value))
         return resolved
@@ -264,6 +286,7 @@ class SpotifyFeaturesFetcher:
             genre=tags.genre,
             composer=tags.composer,
             comment=resolved.get("comment", tags.comment),
+            key=resolved.get("key", tags.key),
             lyrics=tags.lyrics,
         )
         tm.write(path, tag_data)

@@ -36,6 +36,7 @@ class TagData:
     artwork_data: bytes | None = None
     artwork_mime: str = ""
     isrc: str = ""
+    key: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -54,6 +55,7 @@ class TagData:
             "bitrate": self.bitrate,
             "artwork_data": self.artwork_data,
             "artwork_mime": self.artwork_mime,
+            "key": self.key,
         }
 
 
@@ -160,6 +162,43 @@ def _float(f: Any, key: str) -> float:
         return 0.0
 
 
+_MP4_KEY = "----:com.apple.iTunes:initialkey"
+
+
+def _read_key(mfile: Any) -> str:
+    """Initial key via mutagen (ID3 TKEY, Vorbis INITIALKEY, MP4 freeform); '' if absent."""
+    try:
+        tags = mfile.tags
+        if tags is None:
+            return ""
+        if isinstance(tags, ID3):
+            frame = tags.get("TKEY")
+            return str(frame.text[0]) if frame and frame.text else ""
+        vals = tags.get(_MP4_KEY) or tags.get("initialkey") or tags.get("INITIALKEY")
+        if not vals:
+            return ""
+        v = vals[0]
+        return bytes(v).decode("utf-8", "replace") if isinstance(v, bytes) else str(v)
+    except Exception:
+        return ""
+
+
+def _write_key(mfile: Any, key: str) -> None:
+    """Set initial key on the in-memory mutagen file; unsupported formats are skipped."""
+    from mutagen.flac import FLAC
+    from mutagen.id3 import TKEY
+    from mutagen.mp4 import MP4, MP4FreeForm
+    from mutagen.oggvorbis import OggVorbis
+
+    tags = getattr(mfile, "tags", None)
+    if isinstance(tags, ID3):
+        tags.setall("TKEY", [TKEY(encoding=3, text=[key])])
+    elif isinstance(mfile, MP4):
+        mfile[_MP4_KEY] = [MP4FreeForm(key.encode("utf-8"))]
+    elif isinstance(mfile, (FLAC, OggVorbis)):
+        mfile["initialkey"] = [key]
+
+
 class TagManager:
     """Reads and writes tags for audio files using music-tag."""
 
@@ -217,6 +256,7 @@ class TagManager:
             artwork_data=artwork_data,
             artwork_mime=artwork_mime,
             isrc=_str(f, "isrc"),
+            key=_read_key(getattr(f, "mfile", None)),
         )
 
     def write(self, path: str | Path, tags: TagData, id3_version: int = 4) -> None:
@@ -264,6 +304,8 @@ class TagManager:
             f["composer"] = tags.composer
             f["comment"] = tags.comment
             f["lyrics"] = tags.lyrics
+            if tags.key:  # empty key never wipes an existing one
+                _write_key(f.mfile, tags.key)
 
             if tags.artwork_data is not None:
                 try:
