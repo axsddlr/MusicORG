@@ -35,6 +35,7 @@ class TagData:
     bitrate: int = 0
     artwork_data: bytes | None = None
     artwork_mime: str = ""
+    isrc: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -215,6 +216,7 @@ class TagManager:
             bitrate=_int(f, "#bitrate"),
             artwork_data=artwork_data,
             artwork_mime=artwork_mime,
+            isrc=_str(f, "isrc"),
         )
 
     def write(self, path: str | Path, tags: TagData, id3_version: int = 4) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import re
 from functools import partial
 from pathlib import Path
@@ -10,19 +11,27 @@ from typing import cast
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
+    QAbstractItemView, QCheckBox, QComboBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QMessageBox, QPushButton, QSplitter, QTableWidget, QTableWidgetItem,
-    QSizePolicy,
+    QSizePolicy, QSpinBox,
     QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import Qt
 
 from musicorg.core.autotagger import MatchCandidate
+from musicorg.core.filename_parser import guess_from_filename
+from musicorg.core.tag_profiles import AutoTagProfile, ProfileStore
 from musicorg.ui.widgets.match_list import MatchList
 from musicorg.ui.widgets.progress_bar import ProgressIndicator
 from musicorg.ui.utils import safe_disconnect_multiple
 from musicorg.workers.artwork_worker import ArtworkPreviewWorker
-from musicorg.workers.autotag_worker import ApplyMatchWorker, AutoTagWorker, SearchMode
+from musicorg.workers.autotag_worker import ALL_FIELDS, ApplyMatchWorker, AutoTagWorker, SearchMode
+from musicorg.workers.shazam_worker import ShazamWorker
+
+
+def _shazam_available() -> bool:
+    # find_spec avoids paying shazamio's ~1s import cost at panel construction.
+    return importlib.util.find_spec("shazamio") is not None
 
 
 class AutoTagPanel(QDialog):
@@ -45,6 +54,13 @@ class AutoTagPanel(QDialog):
         self._preview_request_id: int = 0
         self._cache_db_path = ""
         self._discogs_token = ""
+        self._shazam_worker: ShazamWorker | None = None
+        self._shazam_thread: QThread | None = None
+        self._shazam_ok = _shazam_available()
+        self._file_duration: int | None = None
+        self._file_isrc = ""
+        self._profile_store: ProfileStore | None = None
+        self._profiles: list[AutoTagProfile] = []
 
         self._setup_ui()
 
@@ -56,6 +72,28 @@ class AutoTagPanel(QDialog):
         # Files info
         self._files_label = QLabel("No files loaded. Send files from Source tab.")
         layout.addWidget(self._files_label)
+
+        # Profiles
+        profile_row = QHBoxLayout()
+        profile_row.setContentsMargins(0, 0, 0, 0)
+        profile_row.setSpacing(6)
+        self._profile_combo = QComboBox()
+        self._profile_combo.setEditable(True)
+        self._profile_combo.setMinimumWidth(180)
+        self._profile_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self._profile_combo.lineEdit().setPlaceholderText("Profile name")
+        self._profile_combo.activated.connect(self._on_profile_selected)
+        self._profile_save_btn = QPushButton("Save")
+        self._profile_save_btn.clicked.connect(self._save_profile)
+        self._profile_delete_btn = QPushButton("Delete")
+        self._profile_delete_btn.clicked.connect(self._delete_profile)
+        profile_row.addWidget(QLabel("Profile:"))
+        profile_row.addWidget(self._profile_combo)
+        profile_row.addWidget(self._profile_save_btn)
+        profile_row.addWidget(self._profile_delete_btn)
+        profile_row.addStretch()
+        layout.addLayout(profile_row)
+        self._set_profiles_enabled(False)
 
         # Search controls
         search_group = QGroupBox("Search")
@@ -88,6 +126,16 @@ class AutoTagPanel(QDialog):
         self._search_single_btn.clicked.connect(self._start_search_single)
         search_btn_layout.addWidget(self._search_btn)
         search_btn_layout.addWidget(self._search_single_btn)
+        self._shazam_btn = QPushButton("Identify with Shazam")
+        self._shazam_btn.setEnabled(False)
+        self._shazam_btn.clicked.connect(self._start_shazam)
+        if self._shazam_ok:
+            self._shazam_btn.setToolTip("Fingerprint the loaded file to fill artist/title/ISRC")
+        else:
+            self._shazam_btn.setToolTip(
+                "Unavailable: the optional 'shazamio' package is not installed"
+            )
+        search_btn_layout.addWidget(self._shazam_btn)
         search_btn_layout.addStretch()
         search_layout.addRow(search_btn_layout)
         layout.addWidget(search_group)
@@ -124,6 +172,29 @@ class AutoTagPanel(QDialog):
         cleanup_layout.addRow("Find:", self._cleanup_pattern_edit)
         cleanup_layout.addRow("Replace:", self._cleanup_replace_edit)
         layout.addWidget(cleanup_group)
+
+        # -- matching options --
+        matching_group = QGroupBox("Matching")
+        matching_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        matching_layout = QHBoxLayout(matching_group)
+        matching_layout.setContentsMargins(6, 6, 6, 6)
+        self._min_match_spin = QSpinBox()
+        self._min_match_spin.setRange(0, 100)
+        self._min_match_spin.setSuffix(" %")
+        self._min_match_spin.setSpecialValueText("Off")
+        self._min_match_spin.setToolTip("Hide candidates below this match percentage (0 = off)")
+        self._merge_genres_cb = QCheckBox("Merge genres")
+        self._merge_genres_cb.setToolTip("Combine the file's existing genre with the match genre")
+        self._id3v23_cb = QCheckBox("Write ID3v2.3")
+        self._id3v23_cb.setToolTip(
+            "Write ID3v2.3 instead of v2.4 (better compatibility with older players)"
+        )
+        matching_layout.addWidget(QLabel("Min match:"))
+        matching_layout.addWidget(self._min_match_spin)
+        matching_layout.addWidget(self._merge_genres_cb)
+        matching_layout.addWidget(self._id3v23_cb)
+        matching_layout.addStretch()
+        layout.addWidget(matching_group)
 
         # Splitter for match list and track comparison
         splitter = QSplitter(Qt.Orientation.Vertical)
@@ -246,6 +317,109 @@ class AutoTagPanel(QDialog):
         self._discogs_token = token.strip()
         self._source_discogs.setChecked(bool(self._discogs_token))
 
+    def set_profile_dir(self, path: str | Path) -> None:
+        try:
+            self._profile_store = ProfileStore(path)
+            self._profiles = self._profile_store.load_autotag_profiles()
+        except OSError as exc:
+            self._profile_store = None
+            self._profile_combo.setToolTip(f"Profiles unavailable: {exc}")
+            return
+        self._reload_profile_combo()
+        self._set_profiles_enabled(True)
+
+    def _set_profiles_enabled(self, enabled: bool) -> None:
+        for widget in (self._profile_combo, self._profile_save_btn, self._profile_delete_btn):
+            widget.setEnabled(enabled)
+
+    def _reload_profile_combo(self, select: str = "") -> None:
+        self._profile_combo.blockSignals(True)
+        self._profile_combo.clear()
+        self._profile_combo.addItems([p.name for p in self._profiles])
+        self._profile_combo.setCurrentIndex(self._profile_combo.findText(select))
+        self._profile_combo.setEditText(select)
+        self._profile_combo.blockSignals(False)
+
+    def _profile_from_controls(self, name: str) -> AutoTagProfile:
+        return AutoTagProfile(
+            name=name,
+            enabled_sources=[
+                source for cb, source in (
+                    (self._source_mb, "MusicBrainz"),
+                    (self._source_discogs, "Discogs"),
+                    (self._source_beatport, "Beatport"),
+                    (self._source_traxsource, "Traxsource"),
+                ) if cb.isChecked()
+            ],
+            overwrite_fields=self._get_overwrite_fields(),
+            fill_empty_only=self._fill_empty.isChecked(),
+            regex_cleanup_pattern=self._cleanup_pattern_edit.text(),
+            regex_cleanup_replacement=self._cleanup_replace_edit.text(),
+            min_match_pct=self._min_match_spin.value(),
+            merge_genres=self._merge_genres_cb.isChecked(),
+            id3_v23=self._id3v23_cb.isChecked(),
+        )
+
+    def _apply_profile(self, profile: AutoTagProfile) -> None:
+        sources = set(profile.enabled_sources)
+        self._source_mb.setChecked("MusicBrainz" in sources)
+        self._source_discogs.setChecked("Discogs" in sources)
+        self._source_beatport.setChecked("Beatport" in sources)
+        self._source_traxsource.setChecked("Traxsource" in sources)
+        fields = profile.overwrite_fields
+        self._overwrite_all.setChecked(fields is None)
+        for name in ALL_FIELDS:
+            getattr(self, f"_overwrite_{name}").setChecked(fields is None or name in fields)
+        self._fill_empty.setChecked(profile.fill_empty_only)
+        self._cleanup_pattern_edit.setText(profile.regex_cleanup_pattern)
+        self._cleanup_replace_edit.setText(profile.regex_cleanup_replacement)
+        self._min_match_spin.setValue(profile.min_match_pct)
+        self._merge_genres_cb.setChecked(profile.merge_genres)
+        self._id3v23_cb.setChecked(profile.id3_v23)
+
+    def _on_profile_selected(self, index: int) -> None:
+        if 0 <= index < len(self._profiles):
+            self._apply_profile(self._profiles[index])
+            self._progress.finish(f"Loaded profile '{self._profiles[index].name}'")
+
+    def _save_profile(self) -> None:
+        if self._profile_store is None:
+            return
+        name = self._profile_combo.currentText().strip()
+        if not name:
+            self._progress.finish("Enter a profile name to save")
+            return
+        if self._get_overwrite_fields() == []:
+            self._progress.finish("Select at least one field to write")
+            return
+        profile = self._profile_from_controls(name)
+        self._profiles = [p for p in self._profiles if p.name != name] + [profile]
+        self._persist_profiles(name, f"Saved profile '{name}'")
+
+    def _delete_profile(self) -> None:
+        if self._profile_store is None:
+            return
+        name = self._profile_combo.currentText().strip()
+        if not any(p.name == name for p in self._profiles):
+            return
+        self._profiles = [p for p in self._profiles if p.name != name]
+        self._persist_profiles("", f"Deleted profile '{name}'")
+
+    def _persist_profiles(self, select: str, message: str) -> None:
+        if self._profile_store is None:
+            return
+        try:
+            self._profile_store.save_autotag_profiles(self._profiles)
+        except OSError as exc:
+            self._progress.finish(f"Could not save profiles: {exc}")
+            return
+        self._reload_profile_combo(select)
+        self._progress.finish(message)
+
+    def _max_distance(self) -> float | None:
+        pct = self._min_match_spin.value()
+        return None if pct <= 0 else 1 - pct / 100
+
     def _get_enabled_sources(self) -> list[str]:
         sources: list[str] = []
         if self._source_mb.isChecked():
@@ -292,16 +466,26 @@ class AutoTagPanel(QDialog):
         self._cancel_artwork_preview()
         self._clear_artwork_preview()
         self._set_source_status({}, {})
+        self._file_duration = None
+        self._file_isrc = ""
 
-        # Pre-fill hints from first file's tags
+        # Pre-fill hints from first file's tags, falling back to the filename
         if self._files:
             try:
                 from musicorg.core.tagger import TagManager
                 tag_reader = TagManager()
                 tags = tag_reader.read(self._files[0])
-                self._artist_edit.setText(tags.albumartist or tags.artist)
+                artist = tags.albumartist or tags.artist
+                title = tags.title
+                if not artist or not title:
+                    guess = guess_from_filename(self._files[0]) or {}
+                    artist = artist or guess.get("artist", "")
+                    title = title or guess.get("title", "")
+                self._artist_edit.setText(artist)
                 self._album_edit.setText(tags.album)
-                self._title_edit.setText(tags.title)
+                self._title_edit.setText(title)
+                self._file_duration = int(tags.duration) or None
+                self._file_isrc = tags.isrc
             except Exception as exc:
                 self._progress.finish(
                     f"Loaded files, but could not read tag hints: {exc}"
@@ -365,6 +549,9 @@ class AutoTagPanel(QDialog):
             enabled_sources=enabled_sources,
             regex_cleanup_pattern=self._cleanup_pattern_edit.text().strip(),
             regex_cleanup_replacement=self._cleanup_replace_edit.text().strip(),
+            duration_hint=self._file_duration if mode == "single" else None,
+            isrc=(self._file_isrc or None) if mode == "single" else None,
+            max_distance=self._max_distance(),
         )
         search_thread = QThread()
         search_worker.moveToThread(search_thread)
@@ -421,6 +608,9 @@ class AutoTagPanel(QDialog):
         else:
             self._search_btn.setEnabled(bool(self._files))
             self._search_single_btn.setEnabled(single_file)
+        self._shazam_btn.setEnabled(
+            self._shazam_ok and single_file and self._shazam_thread is None
+        )
 
         # Swap accent: single file → "Search Single" is the primary action
         album_role = "" if single_file else "accent"
@@ -605,6 +795,8 @@ class AutoTagPanel(QDialog):
             discogs_token=self._discogs_token,
             overwrite_fields=overwrite_fields,
             fill_empty_only=self._fill_empty.isChecked(),
+            merge_genres=self._merge_genres_cb.isChecked(),
+            id3_version=3 if self._id3v23_cb.isChecked() else 4,
         )
         self._apply_thread = QThread()
         self._apply_worker.moveToThread(self._apply_thread)
@@ -690,6 +882,69 @@ class AutoTagPanel(QDialog):
         if self._search_thread is search_thread:
             self._search_thread = None
 
+    def _start_shazam(self) -> None:
+        if self._shazam_thread is not None or len(self._files) != 1 or not self._shazam_ok:
+            return
+        worker = ShazamWorker(list(self._files))
+        thread = QThread()
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._on_search_progress, Qt.ConnectionType.QueuedConnection)
+        worker.finished.connect(self._on_shazam_done)
+        worker.error.connect(self._on_shazam_error)
+        worker.finished.connect(thread.quit)
+        worker.error.connect(thread.quit)
+        worker.cancelled.connect(thread.quit)
+        thread.finished.connect(partial(self._cleanup_shazam, worker, thread))
+        self._shazam_worker = worker
+        self._shazam_thread = thread
+        self._refresh_search_controls()
+        self._progress.start("Identifying with Shazam...")
+        thread.start()
+
+    def _on_shazam_done(self, payload: object) -> None:
+        data = payload if isinstance(payload, dict) else {}
+        results = data.get("results") or []
+        errors = [str(e) for e in data.get("errors") or []]
+        if results and isinstance(results[0], dict):
+            result = results[0]
+            artist = str(result.get("artist") or "")
+            title = str(result.get("title") or "")
+            isrc = str(result.get("isrc") or "")
+            if artist:
+                self._artist_edit.setText(artist)
+            if title:
+                self._title_edit.setText(title)
+            if isrc:
+                self._file_isrc = isrc
+            message = f"Shazam: {artist} - {title}" + (f" (ISRC {isrc})" if isrc else "")
+        else:
+            message = "Shazam: " + ("; ".join(errors) or "no match")
+        self._source_status_label.setText(message)
+        self._progress.finish(message)
+
+    def _on_shazam_error(self, error_message: str) -> None:
+        message = f"Shazam error: {error_message}"
+        self._source_status_label.setText(message)
+        self._progress.finish(message)
+
+    def _cleanup_shazam(self, worker: ShazamWorker, thread: QThread) -> None:
+        safe_disconnect_multiple([
+            (worker.progress, self._on_search_progress),
+            (worker.finished, self._on_shazam_done),
+            (worker.error, self._on_shazam_error),
+            (worker.finished, thread.quit),
+            (worker.error, thread.quit),
+            (worker.cancelled, thread.quit),
+        ])
+        worker.deleteLater()
+        thread.deleteLater()
+        if self._shazam_worker is worker:
+            self._shazam_worker = None
+        if self._shazam_thread is thread:
+            self._shazam_thread = None
+        self._refresh_search_controls()
+
     def _cleanup_apply(self) -> None:
         apply_worker = self._apply_worker
         apply_thread = self._apply_thread
@@ -713,6 +968,8 @@ class AutoTagPanel(QDialog):
             self._search_worker.cancel()
         if self._apply_worker:
             self._apply_worker.cancel()
+        if self._shazam_worker:
+            self._shazam_worker.cancel()
         self._cancel_artwork_preview()
         if self._search_thread and self._search_thread.isRunning():
             self._search_thread.quit()
@@ -720,6 +977,11 @@ class AutoTagPanel(QDialog):
         if self._apply_thread and self._apply_thread.isRunning():
             self._apply_thread.quit()
             self._apply_thread.wait()
+        if self._shazam_thread and self._shazam_thread.isRunning():
+            self._shazam_thread.quit()
+            self._shazam_thread.wait()
         if self._search_worker and self._search_thread:
             self._cleanup_search(self._search_worker, self._search_thread)
+        if self._shazam_worker and self._shazam_thread:
+            self._cleanup_shazam(self._shazam_worker, self._shazam_thread)
         self._cleanup_apply()

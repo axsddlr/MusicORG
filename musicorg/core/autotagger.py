@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 from pathlib import Path
 import re
@@ -11,6 +11,7 @@ from typing import Any, Callable, ParamSpec, TypeVar, TypedDict
 from urllib.request import Request, urlopen
 
 from musicorg import __version__
+from musicorg.core.tag_options import merge_genres as _merge_genre_strings
 from musicorg.core.tagger import TagData, TagManager
 from musicorg.errors import ErrorCode, MusicOrgError
 
@@ -294,7 +295,14 @@ class AutoTagger:
         results.sort(key=lambda m: m.distance)
         return results
 
-    def apply_match(self, paths: list[str | Path], match: MatchCandidate) -> bool:
+    def apply_match(
+        self,
+        paths: list[str | Path],
+        match: MatchCandidate,
+        *,
+        merge_genres: bool = False,
+        id3_version: int = 4,
+    ) -> bool:
         """Apply a selected dict-based match candidate to one or more files."""
         if not paths:
             return False
@@ -315,6 +323,8 @@ class AutoTagger:
                     match_payload=match_payload,
                     artwork_data=artwork_data,
                     artwork_mime=artwork_mime,
+                    merge_genres=merge_genres,
+                    id3_version=id3_version,
                 )
             return self._apply_single_match(
                 tag_writer=tag_writer,
@@ -322,6 +332,8 @@ class AutoTagger:
                 match_payload=match_payload,
                 artwork_data=artwork_data,
                 artwork_mime=artwork_mime,
+                merge_genres=merge_genres,
+                id3_version=id3_version,
             )
         except Exception as exc:
             raise MusicOrgError(ErrorCode.OPERATION_FAILED, message=f"Apply match failed: {exc}", details={"cause": str(exc)}) from exc
@@ -333,6 +345,8 @@ class AutoTagger:
         *,
         overwrite_fields: list[str],
         fill_empty_only: bool = True,
+        merge_genres: bool = False,
+        id3_version: int = 4,
     ) -> bool:
         if not paths:
             return False
@@ -356,6 +370,8 @@ class AutoTagger:
                     artwork_mime=artwork_mime,
                     field_set=field_set,
                     fill_empty_only=fill_empty_only,
+                    merge_genres=merge_genres,
+                    id3_version=id3_version,
                 )
             return self._apply_single_match_selective(
                 tag_writer=tag_writer,
@@ -365,6 +381,8 @@ class AutoTagger:
                 artwork_mime=artwork_mime,
                 field_set=field_set,
                 fill_empty_only=fill_empty_only,
+                merge_genres=merge_genres,
+                id3_version=id3_version,
             )
         except Exception as exc:
             raise MusicOrgError(ErrorCode.OPERATION_FAILED, message=f"Apply match failed: {exc}", details={"cause": str(exc)}) from exc
@@ -378,6 +396,8 @@ class AutoTagger:
         artwork_mime: str,
         field_set: set[str],
         fill_empty_only: bool,
+        merge_genres: bool = False,
+        id3_version: int = 4,
     ) -> bool:
         file_rows: list[tuple[int, int, int, Path]] = []
         for index, path in enumerate(paths):
@@ -438,7 +458,7 @@ class AutoTagger:
                 artwork_data=artwork_data if "artwork" in field_set else None,
                 artwork_mime=artwork_mime if "artwork" in field_set else "",
             )
-            tag_writer.write(path_obj, tag_data)
+            self._write_tags(tag_writer, path_obj, tag_data, merge_genres, id3_version)
         return True
 
     def _apply_single_match_selective(
@@ -450,6 +470,8 @@ class AutoTagger:
         artwork_mime: str,
         field_set: set[str],
         fill_empty_only: bool,
+        merge_genres: bool = False,
+        id3_version: int = 4,
     ) -> bool:
         artist = match_payload.get("artist", "")
         album = match_payload.get("album", "")
@@ -488,8 +510,27 @@ class AutoTagger:
                 artwork_data=artwork_data if "artwork" in field_set else None,
                 artwork_mime=artwork_mime if "artwork" in field_set else "",
             )
-            tag_writer.write(path, tag_data)
+            self._write_tags(tag_writer, path, tag_data, merge_genres, id3_version)
         return True
+
+    @staticmethod
+    def _write_tags(
+        tag_writer: TagManager,
+        path: str | Path,
+        tag_data: TagData,
+        merge_genres: bool,
+        id3_version: int,
+    ) -> None:
+        """Single write point for every apply path (genre merge + ID3 version)."""
+        if merge_genres:
+            try:
+                existing_genre = tag_writer.read(path).genre
+            except Exception:
+                existing_genre = ""
+            tag_data = replace(
+                tag_data, genre=_merge_genre_strings(existing_genre, tag_data.genre)
+            )
+        tag_writer.write(path, tag_data, id3_version=id3_version)
 
     def _resolve_hints_from_files(
         self,
@@ -1003,6 +1044,8 @@ class AutoTagger:
         match_payload: MatchPayload,
         artwork_data: bytes | None,
         artwork_mime: str,
+        merge_genres: bool = False,
+        id3_version: int = 4,
     ) -> bool:
         file_rows: list[tuple[int, int, int, Path]] = []
         for index, path in enumerate(paths):
@@ -1044,7 +1087,7 @@ class AutoTagger:
                 artwork_data=artwork_data,
                 artwork_mime=artwork_mime,
             )
-            tag_writer.write(path_obj, tag_data)
+            self._write_tags(tag_writer, path_obj, tag_data, merge_genres, id3_version)
         return True
 
     def _apply_single_match(
@@ -1054,6 +1097,8 @@ class AutoTagger:
         match_payload: MatchPayload,
         artwork_data: bytes | None,
         artwork_mime: str,
+        merge_genres: bool = False,
+        id3_version: int = 4,
     ) -> bool:
         artist = match_payload.get("artist", "")
         album = match_payload.get("album", "")
@@ -1075,7 +1120,7 @@ class AutoTagger:
             artwork_mime=artwork_mime,
         )
         for path in paths:
-            tag_writer.write(path, tag_data)
+            self._write_tags(tag_writer, path, tag_data, merge_genres, id3_version)
         return True
 
     @staticmethod

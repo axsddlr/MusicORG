@@ -150,6 +150,7 @@ class MainWindow(QMainWindow):
         self._autotag_panel.set_cache_db_path(cache_path)
         self._artwork_downloader_panel.set_cache_db_path(cache_path)
         self._autotag_panel.set_discogs_token(self._settings.discogs_token)
+        self._autotag_panel.set_profile_dir(self._settings.app_data_dir / "profiles")
         self._artwork_downloader_panel.set_discogs_token(self._settings.discogs_token)
         self._sync_panel.set_identity_db_path(identity_path)
         self._duplicates_panel.set_cache_db_path(cache_path)

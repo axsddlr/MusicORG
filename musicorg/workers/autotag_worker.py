@@ -32,6 +32,9 @@ class AutoTagWorker(BaseWorker):
         enabled_sources: list[str] | None = None,
         regex_cleanup_pattern: str = "",
         regex_cleanup_replacement: str = "",
+        duration_hint: int | None = None,
+        isrc: str | None = None,
+        max_distance: float | None = None,
     ) -> None:
         super().__init__()
         self._paths = [str(p) for p in paths]
@@ -43,6 +46,9 @@ class AutoTagWorker(BaseWorker):
         self._enabled_sources = enabled_sources
         self._regex_cleanup_pattern = regex_cleanup_pattern
         self._regex_cleanup_replacement = regex_cleanup_replacement
+        self._duration_hint = duration_hint
+        self._isrc = isrc
+        self._max_distance = max_distance
 
     def run(self) -> None:
         self.started.emit()
@@ -64,6 +70,7 @@ class AutoTagWorker(BaseWorker):
             auto_tagger = AutoTagger(
                 discogs_token=self._discogs_token,
                 enabled_sources=self._enabled_sources,
+                max_distance=self._max_distance,
             )
             self.progress.emit(0, 1, regex_warning or "Searching...")
             search_payload: SearchDiagnostics
@@ -83,6 +90,8 @@ class AutoTagWorker(BaseWorker):
                     self._paths[0],
                     artist_hint=artist,
                     title_hint=title,
+                    duration_hint=self._duration_hint,
+                    isrc=self._isrc,
                 )
             candidates = search_payload.get("candidates", [])
             source_errors = search_payload.get("source_errors", {})
@@ -112,6 +121,8 @@ class ApplyMatchWorker(BaseWorker):
         discogs_token: str = "",
         overwrite_fields: list[str] | None = None,  # None = all fields, [] = nothing
         fill_empty_only: bool = True,
+        merge_genres: bool = False,
+        id3_version: int = 4,
     ) -> None:
         super().__init__()
         self._paths = [str(p) for p in paths]
@@ -120,6 +131,8 @@ class ApplyMatchWorker(BaseWorker):
         self._discogs_token = discogs_token
         self._overwrite_fields = overwrite_fields
         self._fill_empty_only = fill_empty_only
+        self._merge_genres = merge_genres
+        self._id3_version = id3_version
 
     def run(self) -> None:
         self.started.emit()
@@ -127,7 +140,12 @@ class ApplyMatchWorker(BaseWorker):
             auto_tagger = AutoTagger(discogs_token=self._discogs_token)
             self.progress.emit(0, 1, "Applying match...")
             if self._overwrite_fields is None and not self._fill_empty_only:
-                applied_successfully = auto_tagger.apply_match(self._paths, self._match)
+                applied_successfully = auto_tagger.apply_match(
+                    self._paths,
+                    self._match,
+                    merge_genres=self._merge_genres,
+                    id3_version=self._id3_version,
+                )
             else:
                 fields = ALL_FIELDS if self._overwrite_fields is None else self._overwrite_fields
                 applied_successfully = auto_tagger.apply_match_with_overrides(
@@ -135,6 +153,8 @@ class ApplyMatchWorker(BaseWorker):
                     self._match,
                     overwrite_fields=fields,
                     fill_empty_only=self._fill_empty_only,
+                    merge_genres=self._merge_genres,
+                    id3_version=self._id3_version,
                 )
             if applied_successfully and self._cache_db_path:
                 cache: TagCache | None = None

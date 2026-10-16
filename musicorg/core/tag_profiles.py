@@ -12,12 +12,15 @@ from typing import Any
 class AutoTagProfile:
     name: str = ""
     enabled_sources: list[str] = field(default_factory=lambda: ["MusicBrainz"])
-    overwrite_fields: list[str] = field(default_factory=list)
+    overwrite_fields: list[str] | None = None  # None = all fields
     fill_empty_only: bool = True
     regex_cleanup_pattern: str = ""
     regex_cleanup_replacement: str = ""
     move_successful_to: str = ""
     move_failed_to: str = ""
+    min_match_pct: int = 0  # 0 = no strictness filter
+    merge_genres: bool = False
+    id3_v23: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -29,19 +32,27 @@ class AutoTagProfile:
             "regex_cleanup_replacement": self.regex_cleanup_replacement,
             "move_successful_to": self.move_successful_to,
             "move_failed_to": self.move_failed_to,
+            "min_match_pct": self.min_match_pct,
+            "merge_genres": self.merge_genres,
+            "id3_v23": self.id3_v23,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AutoTagProfile:
+        # Legacy profiles stored [] to mean "all fields".
+        raw_fields = data.get("overwrite_fields")
         return cls(
             name=str(data.get("name", "")),
             enabled_sources=list(data.get("enabled_sources", ["MusicBrainz"])),
-            overwrite_fields=list(data.get("overwrite_fields", [])),
+            overwrite_fields=list(raw_fields) if raw_fields else None,
             fill_empty_only=bool(data.get("fill_empty_only", True)),
             regex_cleanup_pattern=str(data.get("regex_cleanup_pattern", "")),
             regex_cleanup_replacement=str(data.get("regex_cleanup_replacement", "")),
             move_successful_to=str(data.get("move_successful_to", "")),
             move_failed_to=str(data.get("move_failed_to", "")),
+            min_match_pct=int(data.get("min_match_pct", 0) or 0),
+            merge_genres=bool(data.get("merge_genres", False)),
+            id3_v23=bool(data.get("id3_v23", False)),
         )
 
 
