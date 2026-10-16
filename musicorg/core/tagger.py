@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Self
+from typing import Any
 
 import music_tag
 from mutagen.id3 import ID3
