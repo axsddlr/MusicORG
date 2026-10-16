@@ -38,6 +38,7 @@ class MatchPayload(TypedDict, total=False):
     year: int
     release_id: str
     release_group_id: str
+    recording_id: str
     tracks: list[TrackMetadata]
     artwork_urls: list[str]
     genre: str
@@ -75,8 +76,14 @@ class AutoTagger:
 
     _mb_useragent_set = False
 
-    def __init__(self, discogs_token: str = "", enabled_sources: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        discogs_token: str = "",
+        enabled_sources: list[str] | None = None,
+        max_distance: float | None = None,
+    ) -> None:
         self._discogs_token = discogs_token.strip()
+        self._max_distance = max_distance
         self._enabled_sources = enabled_sources or ["MusicBrainz", "Discogs"]
         if not AutoTagger._mb_useragent_set:
             try:
@@ -154,8 +161,9 @@ class AutoTagger:
             except Exception as exc:
                 source_errors["Traxsource"] = str(exc)
 
-        results.sort(key=lambda m: m.distance)
-        if not results and attempted_sources and len(source_errors) == len(attempted_sources):
+        raised = not results and attempted_sources and len(source_errors) == len(attempted_sources)
+        results = self._finalize(results)
+        if raised:
             detail = "; ".join(
                 f"{source}: {source_errors[source]}"
                 for source in attempted_sources
@@ -169,12 +177,16 @@ class AutoTagger:
         path: str | Path,
         artist_hint: str = "",
         title_hint: str = "",
+        duration_hint: int | None = None,
+        isrc: str | None = None,
     ) -> list[MatchCandidate]:
         """Search MusicBrainz and Discogs for single-track matches."""
         payload = self.search_item_with_diagnostics(
             path=path,
             artist_hint=artist_hint,
             title_hint=title_hint,
+            duration_hint=duration_hint,
+            isrc=isrc,
         )
         return payload["candidates"]
 
@@ -183,6 +195,8 @@ class AutoTagger:
         path: str | Path,
         artist_hint: str = "",
         title_hint: str = "",
+        duration_hint: int | None = None,
+        isrc: str | None = None,
     ) -> SearchDiagnostics:
         """Search single-track matches with per-source diagnostics."""
         path = Path(path)
@@ -209,6 +223,13 @@ class AutoTagger:
         attempted_sources: list[str] = []
 
         sources = self._enabled_sources
+        isrc_results: list[MatchCandidate] = []
+        if isrc and "MusicBrainz" in sources:
+            try:
+                isrc_results = self._call_with_retry(self._search_item_mb_isrc, isrc.strip(), artist, title)
+            except Exception:
+                # Silent fallback to text search; SearchDiagnostics has no notes field.
+                isrc_results = []
         if "MusicBrainz" in sources:
             attempted_sources.append("MusicBrainz")
             try:
@@ -237,8 +258,11 @@ class AutoTagger:
             except Exception as exc:
                 source_errors["Traxsource"] = str(exc)
 
-        results.sort(key=lambda m: m.distance)
-        if not results and attempted_sources and len(source_errors) == len(attempted_sources):
+        raised = not results and attempted_sources and len(source_errors) == len(attempted_sources)
+        seen = {c.raw_match["recording_id"] for c in isrc_results if c.raw_match and c.raw_match.get("recording_id")}
+        results = [c for c in results if not (c.raw_match and c.raw_match.get("recording_id") in seen)]
+        results = isrc_results + self._finalize(results, duration_hint)
+        if raised and not isrc_results:
             detail = "; ".join(
                 f"{source}: {source_errors[source]}"
                 for source in attempted_sources
@@ -246,6 +270,29 @@ class AutoTagger:
             )
             raise MusicOrgError(ErrorCode.SEARCH_EXHAUSTED, message=detail, details={"sources": list(source_errors.keys())})
         return self._build_search_payload(results, source_errors)
+
+    @staticmethod
+    def _duration_penalty(hint_s: float | None, cand_s: float | None) -> float:
+        """0 within 3s, linear to 0.3 at 30s+. Unknown (None/<=0) on either side: 0."""
+        if not hint_s or not cand_s or hint_s <= 0 or cand_s <= 0:
+            return 0.0
+        delta = abs(hint_s - cand_s)
+        return max(0.0, min(0.3, 0.3 * (delta - 3.0) / 27.0))
+
+    def _finalize(
+        self, results: list[MatchCandidate], duration_hint: int | None = None
+    ) -> list[MatchCandidate]:
+        """Single place for duration penalty, strictness filter and ranking."""
+        for cand in results:
+            # Item candidates carry exactly one track; album candidates are not penalised.
+            length = cand.tracks[0].get("length", 0) if len(cand.tracks) == 1 else 0
+            penalty = self._duration_penalty(duration_hint, length)
+            if penalty:
+                cand.distance = max(0.0, min(1.0, cand.distance + penalty))
+        if self._max_distance is not None:
+            results = [c for c in results if c.distance <= self._max_distance]
+        results.sort(key=lambda m: m.distance)
+        return results
 
     def apply_match(self, paths: list[str | Path], match: MatchCandidate) -> bool:
         """Apply a selected dict-based match candidate to one or more files."""
@@ -636,9 +683,24 @@ class AutoTagger:
         if title:
             query["recording"] = title
         data = musicbrainzngs.search_recordings(**query)
+        return self._mb_recording_candidates(data.get("recording-list", [])[:10], artist, title)
 
+    def _search_item_mb_isrc(self, isrc: str, artist: str, title: str) -> list[MatchCandidate]:
+        import musicbrainzngs
+
+        data = musicbrainzngs.get_recordings_by_isrc(isrc, includes=["artists", "releases"])
+        recordings = (data.get("isrc") or {}).get("recording-list", [])[:10]
+        return self._mb_recording_candidates(recordings, artist, title, perfect=True)
+
+    def _mb_recording_candidates(
+        self,
+        recordings: list[dict[str, Any]],
+        artist: str,
+        title: str,
+        perfect: bool = False,
+    ) -> list[MatchCandidate]:
         candidates: list[MatchCandidate] = []
-        for recording in data.get("recording-list", [])[:10]:
+        for recording in recordings:
             release = (recording.get("release-list") or [{}])[0]
             release_id = release.get("id", "")
             release_group = release.get("release-group") or {}
@@ -648,7 +710,7 @@ class AutoTagger:
             item_album = release.get("title", "")
             item_year = self._mb_extract_year(release)
             score = float(recording.get("ext:score", 0) or 0.0)
-            distance = 1.0 - max(0.0, min(score, 100.0)) / 100.0
+            distance = 0.0 if perfect else 1.0 - max(0.0, min(score, 100.0)) / 100.0
             length_ms = recording.get("length", 0)
             length_secs = int(length_ms) // 1000 if str(length_ms).isdigit() else 0
 
@@ -659,6 +721,7 @@ class AutoTagger:
                 "year": item_year,
                 "release_id": release_id,
                 "release_group_id": release_group_id,
+                "recording_id": recording.get("id", ""),
                 "track": 0,
                 "disc": 0,
                 "title": item_title,
