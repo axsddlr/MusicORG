@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
-    QGridLayout, QHBoxLayout, QMainWindow, QStackedWidget, QVBoxLayout, QWidget,
+    QGridLayout, QHBoxLayout, QMainWindow, QMessageBox, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from musicorg.core.library_db import LibraryDatabase
@@ -94,14 +94,6 @@ class MainWindow(QMainWindow):
             import logging
             logging.getLogger(__name__).warning("Failed to open library database: %s", e)
             return None
-
-    def closeEvent(self, event: object) -> None:
-        if self._library_db is not None:
-            try:
-                self._library_db.close()
-            except Exception:
-                pass
-        super().closeEvent(event)
 
     def _setup_layout(self) -> None:
         central = QWidget()
@@ -538,7 +530,7 @@ class MainWindow(QMainWindow):
 
     def _open_batch_tag_ops(self) -> None:
         """Open batch tag operations dialog from current selection."""
-        paths = self._get_selected_paths()
+        paths = self._selected_paths_for_tools()
         if not paths:
             self._status_strip.show_message(
                 "Select files first to use batch tag operations.",
@@ -555,7 +547,7 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _open_tag_to_filename(self) -> None:
-        paths = self._get_selected_paths()
+        paths = self._selected_paths_for_tools()
         if not paths:
             self._status_strip.show_message(
                 "Select files first to rename them to match tags.",
@@ -661,5 +653,10 @@ class MainWindow(QMainWindow):
         self._sync_panel.shutdown()
         self._duplicates_panel.shutdown()
         self._raw_files_panel.shutdown()
+        if self._library_db is not None:
+            try:
+                self._library_db.close()
+            except Exception:
+                pass
         self._settings.window_geometry = self.saveGeometry()
         super().closeEvent(event)
