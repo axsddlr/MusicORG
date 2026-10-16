@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QGroupBox, QGridLayout, QHBoxLayout, QLabel,
-    QLineEdit, QPushButton, QVBoxLayout, QWidget,
+    QLineEdit, QMessageBox, QPushButton, QVBoxLayout, QWidget,
 )
 
 from musicorg.core.tag_profiles import DEFAULT_QUICKTAG_PRESETS
@@ -169,7 +169,7 @@ class QuickTagPanel(QDialog):
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.progress.connect(
-            lambda c, t, m: self._progress.set_progress(c, t, m)
+            lambda c, t, m: self._progress.update_progress(c, t, m)
         )
         self._worker.finished.connect(self._on_apply_finished)
         self._worker.error.connect(self._on_apply_error)
@@ -181,17 +181,24 @@ class QuickTagPanel(QDialog):
         applied = result.get("applied", 0)
         total = result.get("total", 0)
         errors = result.get("errors", [])
-        self._progress.set_progress(total, total, f"Applied to {applied}/{total} files")
+        if errors:
+            self._progress.finish(f"Applied to {applied} files, {len(errors)} failed", 0)
+            box = QMessageBox(QMessageBox.Icon.Warning, "Quick Tag",
+                              f"{len(errors)} file(s) failed.", QMessageBox.StandardButton.Ok, self)
+            box.setDetailedText(chr(10).join(errors))
+            box.exec()
+        else:
+            self._progress.finish(f"Applied to {applied}/{total} files")
         self.tags_applied.emit()
         self._clear_active()
 
     def _on_apply_error(self, message: str) -> None:
         self._cleanup_thread()
-        self._progress.set_progress(0, 1, f"Error: {message}")
+        self._progress.finish(f"Error: {message}", 0)
 
     def _on_apply_cancelled(self) -> None:
         self._cleanup_thread()
-        self._progress.set_progress(0, 1, "Cancelled")
+        self._progress.finish("Cancelled", 0)
 
     def _cleanup_thread(self) -> None:
         if self._worker is not None:

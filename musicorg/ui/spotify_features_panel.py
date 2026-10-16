@@ -7,7 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
-    QLineEdit, QPushButton, QVBoxLayout, QWidget,
+    QLineEdit, QMessageBox, QPushButton, QVBoxLayout, QWidget,
 )
 
 from musicorg.core.spotify_features import (
@@ -94,10 +94,6 @@ class SpotifyFeaturesPanel(QDialog):
         self._files_label.setText(f"{len(self._files)} files selected")
         self._fetch_btn.setEnabled(bool(self._files and self._client_id_edit.text() and self._client_secret_edit.text()))
 
-    def load_files(self, paths: list[Path]) -> None:
-        self._files = list(paths)
-        self._update_label()
-
     def _fetch_features(self) -> None:
         if not self._files:
             return
@@ -119,7 +115,7 @@ class SpotifyFeaturesPanel(QDialog):
         self._thread = QThread()
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
-        self._worker.progress.connect(lambda c, t, m: self._progress.set_progress(c, t, m))
+        self._worker.progress.connect(lambda c, t, m: self._progress.update_progress(c, t, m))
         self._worker.finished.connect(self._on_finished)
         self._worker.error.connect(self._on_error)
         self._worker.cancelled.connect(self._on_cancelled)
@@ -130,16 +126,23 @@ class SpotifyFeaturesPanel(QDialog):
         applied = result.get("applied", 0)
         total = result.get("total", 0)
         errors = result.get("errors", [])
-        self._progress.set_progress(total, total, f"Applied features to {applied}/{total} files")
+        if errors:
+            self._progress.finish(f"Applied to {applied} files, {len(errors)} failed", 0)
+            box = QMessageBox(QMessageBox.Icon.Warning, "Spotify Audio Features",
+                              f"{len(errors)} file(s) failed.", QMessageBox.StandardButton.Ok, self)
+            box.setDetailedText(chr(10).join(errors))
+            box.exec()
+        else:
+            self._progress.finish(f"Applied features to {applied}/{total} files")
         self.tags_applied.emit()
 
     def _on_error(self, message: str) -> None:
         self._cleanup_thread()
-        self._progress.set_progress(0, 1, f"Error: {message}")
+        self._progress.finish(f"Error: {message}", 0)
 
     def _on_cancelled(self) -> None:
         self._cleanup_thread()
-        self._progress.set_progress(0, 1, "Cancelled")
+        self._progress.finish("Cancelled", 0)
 
     def _cleanup_thread(self) -> None:
         if self._worker is not None:
