@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMessageBox, QPushButton, QSplitter, QVBoxLayout, QWidget,
     QScrollArea,
+    QComboBox,
 )
 
 from musicorg.core.library_db import LibraryDatabase

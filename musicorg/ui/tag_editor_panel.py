@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QVBoxLayout,
     QWidget,
+    QFormLayout, QLineEdit,
 )
 
 from musicorg.core.tag_cache import TagCache
@@ -113,6 +114,18 @@ class TagEditorPanel(QDialog):
         self._save_btn.setEnabled(False)
         self._save_btn.clicked.connect(self._save_tags)
 
+        self._revert_btn = QPushButton("Revert")
+        self._revert_btn.setEnabled(False)
+        self._revert_btn.clicked.connect(self._revert_tags)
+
+        btn_layout.addStretch()
+        btn_layout.addWidget(self._revert_btn)
+        btn_layout.addWidget(self._save_btn)
+        layout.addLayout(btn_layout)
+
+        self._progress = ProgressIndicator()
+        layout.addWidget(self._progress)
+
     def _build_custom_tags_ui(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
@@ -187,17 +200,6 @@ class TagEditorPanel(QDialog):
                 item.widget().deleteLater()
             elif item and item.layout():
                 TagEditorPanel._clear_layout(item.layout())
-        self._revert_btn = QPushButton("Revert")
-        self._revert_btn.setEnabled(False)
-        self._revert_btn.clicked.connect(self._revert_tags)
-
-        btn_layout.addStretch()
-        btn_layout.addWidget(self._revert_btn)
-        btn_layout.addWidget(self._save_btn)
-        layout.addLayout(btn_layout)
-
-        self._progress = ProgressIndicator()
-        layout.addWidget(self._progress)
 
     def set_cache_db_path(self, path: str) -> None:
         self._cache_db_path = path

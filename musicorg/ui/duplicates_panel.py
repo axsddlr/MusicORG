@@ -9,6 +9,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QHBoxLayout, QHeaderView, QLabel, QMessageBox,
     QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+    QTableWidget, QTableWidgetItem,
 )
 
 from musicorg.core.duplicate_finder import DuplicateGroup
