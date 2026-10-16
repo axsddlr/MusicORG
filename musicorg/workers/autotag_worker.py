@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 
 SearchMode = Literal["album", "single"]
 
+ALL_FIELDS = ["title", "artist", "album", "albumartist", "track", "disc", "year", "genre", "artwork"]
+
 
 class AutoTagWorker(BaseWorker):
     """Searches MusicBrainz/Discogs for matches in a background thread."""
@@ -49,26 +51,27 @@ class AutoTagWorker(BaseWorker):
             artist = self._artist_hint
             album = self._album_hint
             title = self._title_hint
+            regex_warning = ""
             if self._regex_cleanup_pattern:
                 try:
                     pat = re.compile(self._regex_cleanup_pattern)
                     artist = pat.sub(self._regex_cleanup_replacement, artist) if artist else artist
                     album = pat.sub(self._regex_cleanup_replacement, album) if album else album
                     title = pat.sub(self._regex_cleanup_replacement, title) if title else title
-                except re.error:
-                    pass
+                except re.error as exc:
+                    regex_warning = f"Invalid cleanup regex: {exc}"
 
             auto_tagger = AutoTagger(
                 discogs_token=self._discogs_token,
                 enabled_sources=self._enabled_sources,
             )
-            self.progress.emit(0, 1, "Searching...")
+            self.progress.emit(0, 1, regex_warning or "Searching...")
             search_payload: SearchDiagnostics
             if self._mode == "album":
                 search_payload = auto_tagger.search_album_with_diagnostics(
                     self._paths,
-                    artist_hint=self._artist_hint,
-                    album_hint=self._album_hint,
+                    artist_hint=artist,
+                    album_hint=album,
                 )
             else:
                 if not self._paths:
@@ -78,8 +81,8 @@ class AutoTagWorker(BaseWorker):
                     return
                 search_payload = auto_tagger.search_item_with_diagnostics(
                     self._paths[0],
-                    artist_hint=self._artist_hint,
-                    title_hint=self._title_hint,
+                    artist_hint=artist,
+                    title_hint=title,
                 )
             candidates = search_payload.get("candidates", [])
             source_errors = search_payload.get("source_errors", {})
@@ -107,7 +110,7 @@ class ApplyMatchWorker(BaseWorker):
         *,
         cache_db_path: str = "",
         discogs_token: str = "",
-        overwrite_fields: list[str] | None = None,
+        overwrite_fields: list[str] | None = None,  # None = all fields, [] = nothing
         fill_empty_only: bool = True,
     ) -> None:
         super().__init__()
@@ -115,7 +118,7 @@ class ApplyMatchWorker(BaseWorker):
         self._match = match
         self._cache_db_path = cache_db_path
         self._discogs_token = discogs_token
-        self._overwrite_fields = overwrite_fields or []
+        self._overwrite_fields = overwrite_fields
         self._fill_empty_only = fill_empty_only
 
     def run(self) -> None:
@@ -123,15 +126,16 @@ class ApplyMatchWorker(BaseWorker):
         try:
             auto_tagger = AutoTagger(discogs_token=self._discogs_token)
             self.progress.emit(0, 1, "Applying match...")
-            if self._overwrite_fields:
+            if self._overwrite_fields is None and not self._fill_empty_only:
+                applied_successfully = auto_tagger.apply_match(self._paths, self._match)
+            else:
+                fields = ALL_FIELDS if self._overwrite_fields is None else self._overwrite_fields
                 applied_successfully = auto_tagger.apply_match_with_overrides(
                     self._paths,
                     self._match,
-                    overwrite_fields=self._overwrite_fields,
+                    overwrite_fields=fields,
                     fill_empty_only=self._fill_empty_only,
                 )
-            else:
-                applied_successfully = auto_tagger.apply_match(self._paths, self._match)
             if applied_successfully and self._cache_db_path:
                 cache: TagCache | None = None
                 try:

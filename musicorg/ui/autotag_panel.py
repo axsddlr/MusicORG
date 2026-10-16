@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from functools import partial
 from pathlib import Path
 from typing import cast
@@ -257,9 +258,10 @@ class AutoTagPanel(QDialog):
             sources.append("Traxsource")
         return sources
 
-    def _get_overwrite_fields(self) -> list[str]:
+    def _get_overwrite_fields(self) -> list[str] | None:
+        """None = all fields; a list (possibly empty = nothing) otherwise."""
         if self._overwrite_all.isChecked():
-            return []
+            return None
         fields: list[str] = []
         for cb, name in [
             (self._overwrite_title, "title"),
@@ -331,6 +333,14 @@ class AutoTagPanel(QDialog):
                 "Load files from Source before running album search."
             )
             return
+
+        pattern = self._cleanup_pattern_edit.text().strip()
+        if pattern:
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                QMessageBox.warning(self, "Invalid Regex", f"Invalid cleanup regex: {exc}")
+                return
 
         self._clear_artwork_preview()
         self._search_in_progress = True
@@ -580,10 +590,13 @@ class AutoTagPanel(QDialog):
         if not candidate or not self._files:
             return
 
+        overwrite_fields = self._get_overwrite_fields()
+        if overwrite_fields is not None and not overwrite_fields:
+            self._progress.finish("Select at least one field to write")
+            return
+
         self._apply_btn.setEnabled(False)
         self._progress.start("Applying match...")
-
-        overwrite_fields = self._get_overwrite_fields()
 
         self._apply_worker = ApplyMatchWorker(
             self._files,
